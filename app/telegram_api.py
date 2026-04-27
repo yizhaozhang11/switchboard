@@ -106,6 +106,9 @@ class TelegramBotAPI:
                 return
             raise
 
+    async def set_webhook(self, url: str) -> dict:
+        return await self.request("setWebhook", {"url": url})
+
     async def delete_message(self, chat_id: int, message_id: int) -> None:
         try:
             await self.request("deleteMessage", {"chat_id": chat_id, "message_id": message_id})

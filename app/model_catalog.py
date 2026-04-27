@@ -10,7 +10,7 @@ from app.providers.claude import (
 from app.types import ModelSpec
 
 
-type ModelCatalog = dict[str, tuple[ModelSpec, ...]]
+ModelCatalog = dict[str, tuple[ModelSpec, ...]]
 
 DEFAULT_MODEL_CONFIG_BASENAME = "models.toml"
 KNOWN_PROVIDERS = ("openai", "gemini", "claude")
