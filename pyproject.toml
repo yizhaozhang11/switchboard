@@ -1,0 +1,15 @@
+[project]
+name = "switchboard"
+version = "0.1.0"
+description = "Switchboard Telegram AI bot — Cloudflare Workers port"
+requires-python = ">=3.11"
+dependencies = [
+    "anthropic>=0.94",
+    "httpx>=0.28",
+    "google-genai>=1.73",
+    "openai>=2.31",
+    "telegram-markdown-entities>=0.1",
+]
+
+[dependency-groups]
+dev = []

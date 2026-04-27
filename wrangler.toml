@@ -1,0 +1,23 @@
+name = "switchboard"
+main = "worker.py"
+compatibility_date = "2025-04-01"
+
+[[d1_databases]]
+binding = "DB"
+database_name = "switchboard-db"
+database_id = ""
+
+[vars]
+TELEGRAM_BOT_TOKEN = ""
+OPENAI_API_KEY = ""
+GEMINI_API_KEY = ""
+ANTHROPIC_API_KEY = ""
+BOT_DEFAULT_REPLY_MODE = "auto"
+BOT_SKIP_PREFIX = "//"
+BOT_CONVERSATION_TIMEOUT_SECONDS = "300"
+BOT_SYSTEM_PROMPT = "You are a helpful assistant in a Telegram chat. Answer clearly and briefly, keep context local to the active conversation, and avoid assuming you should answer messages that explicitly opt out."
+BOT_TELEGRAM_MESSAGE_LIMIT = "3900"
+BOT_RENDER_EDIT_INTERVAL_SECONDS = "1.0"
+BOT_OWNER_USER_IDS = ""
+BOT_DEFAULT_MODEL_ALIAS = ""
+SAFETY_IDENTIFIER_SALT = ""

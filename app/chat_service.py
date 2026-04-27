@@ -3,14 +3,13 @@ from __future__ import annotations
 import asyncio
 import hashlib
 import logging
-from collections import defaultdict
 from dataclasses import dataclass, replace
 
 from app.config import VALID_REPLY_MODES
 from app.conversation_engine import ConversationEngine, DeferredAction, StoredUserInput, TurnPlan
+from app.d1_storage import D1Storage, utcnow
 from app.providers.registry import ProviderRegistry, supported_tool_aliases_for_provider
 from app.render import ReplySession, render_reply_text
-from app.storage import Storage, utcnow
 from app.telegram_api import TelegramBotAPI
 from app.types import (
     ChatAction,
@@ -47,7 +46,7 @@ class ChatService:
     def __init__(
         self,
         *,
-        storage: Storage,
+        storage: D1Storage,
         registry: ProviderRegistry,
         system_prompt: str,
         owner_user_ids: tuple[int, ...],
@@ -67,9 +66,8 @@ class ChatService:
             storage=storage,
             conversation_timeout_seconds=conversation_timeout_seconds,
         )
-        self._turn_claim_locks: defaultdict[tuple[int, int], asyncio.Lock] = defaultdict(asyncio.Lock)
-        self._conversation_locks: defaultdict[tuple[int, int], asyncio.Lock] = defaultdict(asyncio.Lock)
-        self._assistant_completion_events: dict[int, asyncio.Event] = {}
+
+    # ── Command handlers (synchronous, no storage I/O) ──
 
     def list_models_text(self, settings: ChatSettings) -> str:
         lines = [f"Default model: {settings.default_model_alias}", "", "Available models:"]
@@ -158,34 +156,34 @@ class ChatService:
     def can_manage_allowlist(self, user_id: int) -> bool:
         return user_id in self.owner_user_ids
 
-    def set_default_model(self, *, chat_id: int, alias: str, commit: bool = True) -> str:
+    async def set_default_model(self, *, chat_id: int, alias: str) -> str:
         selection = self.registry.resolve_selection(alias)
         if selection is None:
             raise ValueError(f"Unknown model alias: {alias}")
-        self.storage.settings.set_default_model_alias(chat_id, alias, commit=commit)
+        await self.storage.settings.set_default_model_alias(chat_id, alias)
         return f"Default model set to {alias} -> {selection.model.provider}:{selection.model.model_id}"
 
-    def set_reply_mode(self, *, chat_id: int, reply_mode: str, commit: bool = True) -> str:
+    async def set_reply_mode(self, *, chat_id: int, reply_mode: str) -> str:
         if reply_mode not in VALID_REPLY_MODES:
             raise ValueError("Reply mode must be one of auto, mention, off")
-        self.storage.settings.set_reply_mode(chat_id, reply_mode, commit=commit)
+        await self.storage.settings.set_reply_mode(chat_id, reply_mode)
         return f"Reply mode set to {reply_mode}"
 
-    def is_reply_allowed(self, *, chat_id: int, user_id: int) -> bool:
-        return self.storage.settings.is_reply_allowed(chat_id=chat_id, user_id=user_id)
+    async def is_reply_allowed(self, *, chat_id: int, user_id: int) -> bool:
+        return await self.storage.settings.is_reply_allowed(chat_id=chat_id, user_id=user_id)
 
-    def toggle_chat_allowlist(self, *, chat_id: int, commit: bool = True) -> str:
-        is_allowed = self.storage.settings.toggle_allowlist_entry(kind="chat", target_id=chat_id, commit=commit)
+    async def toggle_chat_allowlist(self, *, chat_id: int) -> str:
+        is_allowed = await self.storage.settings.toggle_allowlist_entry(kind="chat", target_id=chat_id)
         state = "added to" if is_allowed else "removed from"
         return f"Chat {chat_id} {state} the whitelist."
 
-    def toggle_user_allowlist(self, *, user_id: int, commit: bool = True) -> str:
-        is_allowed = self.storage.settings.toggle_allowlist_entry(kind="user", target_id=user_id, commit=commit)
+    async def toggle_user_allowlist(self, *, user_id: int) -> str:
+        is_allowed = await self.storage.settings.toggle_allowlist_entry(kind="user", target_id=user_id)
         state = "added to" if is_allowed else "removed from"
         return f"User {user_id} {state} the whitelist."
 
-    def whitelist_text(self) -> str:
-        entries = self.storage.settings.list_allowlist_entries()
+    async def whitelist_text(self) -> str:
+        entries = await self.storage.settings.list_allowlist_entries()
         chat_ids = [str(entry.target_id) for entry in entries if entry.kind == "chat"]
         user_ids = [str(entry.target_id) for entry in entries if entry.kind == "user"]
         return "\n".join(
@@ -203,6 +201,8 @@ class ChatService:
             return ["- (none)"]
         return [f"- {entry}" for entry in entries]
 
+    # ── Core reply generation (simplified for webhook context) ──
+
     async def generate_reply(
         self,
         *,
@@ -210,9 +210,7 @@ class ChatService:
         incoming_message: IncomingMessage,
         settings: ChatSettings,
         action: ChatAction,
-        inbox_update_ids: tuple[int, ...] = (),
     ) -> None:
-        prepared_turn: PreparedTurn | None = None
         raw_user_input = (
             None
             if action.intent == "set_system_prompt"
@@ -222,149 +220,122 @@ class ChatService:
                 parts=action.parts,
             )
         )
-        lock_key = (incoming_message.chat_id, incoming_message.user_id)
-        while True:
-            deferred_action: DeferredAction | None = None
-            turn_plan: TurnPlan | None = None
-            async with self._turn_claim_locks[lock_key]:
-                async with self._conversation_locks[lock_key]:
-                    result = self.engine.begin_action(
-                        incoming_message=incoming_message,
-                        default_model_alias=settings.default_model_alias,
-                        action=action,
-                        user_input=raw_user_input,
-                    )
-                    if isinstance(result, DeferredAction):
-                        deferred_action = result
-                    elif isinstance(result, TurnPlan):
-                        turn_plan = result
-                    else:
-                        prepared_turn = None
-                        break
-                if turn_plan is not None:
-                    stored_turn_plan = await self._try_store_turn_plan_images(api=api, plan=turn_plan)
-                    if stored_turn_plan is None:
-                        return
-                    async with self._conversation_locks[lock_key]:
-                        prepared_turn = await self._realize_turn_locked(
-                            api=api,
-                            plan=stored_turn_plan,
-                            inbox_update_ids=inbox_update_ids,
-                        )
-                    break
-            if deferred_action is not None:
-                await self._wait_for_assistant_completion(deferred_action.assistant_message_id)
 
+        result = await self.engine.begin_action(
+            incoming_message=incoming_message,
+            default_model_alias=settings.default_model_alias,
+            action=action,
+            user_input=raw_user_input,
+        )
+
+        if result is None:
+            return
+
+        if isinstance(result, DeferredAction):
+            # In webhook context, deferring means we just queue
+            # The next webhook call will pick up the pending messages
+            return
+
+        assert isinstance(result, TurnPlan)
+        prepared_turn = await self._realize_turn(api=api, plan=result)
         if prepared_turn is None:
             return
         await self._run_conversation_loop(api=api, prepared_turn=prepared_turn)
 
-    async def _wait_for_assistant_completion(self, assistant_message_id: int) -> None:
-        while True:
-            message = self.storage.conversations.get_message(assistant_message_id)
-            if message is None or message.status != "streaming":
-                return
-
-            completion_event = self._assistant_completion_events.get(assistant_message_id)
-            if completion_event is None:
-                await asyncio.sleep(0.05)
-                continue
-            await completion_event.wait()
-
-    async def _realize_turn_locked(
+    async def _realize_turn(
         self,
         *,
         api: TelegramBotAPI,
         plan: TurnPlan,
-        inbox_update_ids: tuple[int, ...] = (),
     ) -> PreparedTurn | None:
         conversation = plan.conversation
         selection = self.registry.resolve_selection(conversation.model_alias)
         if selection is None:
-            await self._send_pre_realization_reply(
-                api=api,
-                chat_id=conversation.chat_id,
-                text=f"Unknown model alias: {conversation.model_alias}",
+            await api.send_message(
+                conversation.chat_id,
+                f"Unknown model alias: {conversation.model_alias}",
                 reply_to_message_id=plan.reply_to_message_id,
-                inbox_update_ids=inbox_update_ids,
             )
             return None
 
         assistant_parent_message_id = plan.assistant_parent_message_id
         if plan.user_input is not None:
             if plan.user_input.images and not selection.model.supports_images:
-                await self._send_pre_realization_reply(
-                    api=api,
-                    chat_id=conversation.chat_id,
-                    text=f"Model alias {conversation.model_alias} does not accept image input.",
+                await api.send_message(
+                    conversation.chat_id,
+                    f"Model alias {conversation.model_alias} does not accept image input.",
                     reply_to_message_id=plan.reply_to_message_id,
-                    inbox_update_ids=inbox_update_ids,
                 )
                 return None
 
+            # Download images from Telegram → loaded refs (no filesystem in Workers)
+            loaded_parts = await self._ensure_loaded_images(api=api, parts=plan.user_input.parts)
+            plan = TurnPlan(
+                conversation=plan.conversation,
+                reply_to_message_id=plan.reply_to_message_id,
+                source_telegram_message_ids=plan.source_telegram_message_ids,
+                user_input=StoredUserInput(
+                    content=plan.user_input.content,
+                    images=tuple(p.image for p in loaded_parts if p.kind == "image" and p.image is not None),
+                    parts=loaded_parts,
+                ),
+                user_parent_message_id=plan.user_parent_message_id,
+                assistant_parent_message_id=plan.assistant_parent_message_id,
+                user_message_created_at=plan.user_message_created_at,
+            )
+
         user_message_id: int | None = None
 
-        with self.storage.transaction():
-            if plan.user_input is not None:
-                timestamp = plan.user_message_created_at or utcnow()
-                user_message_id = self.storage.conversations.create_message(
-                    conversation_id=conversation.id,
-                    chat_id=conversation.chat_id,
-                    telegram_message_id=plan.reply_to_message_id,
-                    message_type="user",
-                    parent_message_id=plan.user_parent_message_id,
-                    provider=selection.model.provider,
-                    model_id=selection.model.model_id,
-                    model_alias=conversation.model_alias,
-                    content=plan.user_input.content,
-                    images=plan.user_input.images,
-                    parts=plan.user_input.parts,
-                    status="complete",
-                    created_at=timestamp,
-                    commit=False,
-                )
-                self._link_logical_message_telegram_ids(
-                    chat_id=conversation.chat_id,
-                    logical_message_id=user_message_id,
-                    primary_telegram_message_id=plan.reply_to_message_id,
-                    telegram_message_ids=plan.source_telegram_message_ids,
-                    commit=False,
-                )
-                assistant_parent_message_id = user_message_id
-
-            if assistant_parent_message_id is None:
-                raise RuntimeError("Turn plan does not have an assistant parent")
-
-            conversation_messages = self._build_provider_conversation(assistant_parent_message_id)
-            request = ChatRequest(
-                model=selection.model,
-                conversation=conversation_messages,
-                system_prompt=conversation.system_prompt_override or self.system_prompt,
-                safety_identifier=self._build_safety_identifier(conversation.user_id),
-                requested_tools=selection.requested_tools,
-            )
-            assistant_message_id = self.storage.conversations.create_message(
+        # D1 auto-commits each call — no transaction wrapper needed
+        if plan.user_input is not None:
+            timestamp = plan.user_message_created_at or utcnow()
+            user_message_id = await self.storage.conversations.create_message(
                 conversation_id=conversation.id,
                 chat_id=conversation.chat_id,
-                telegram_message_id=None,
-                message_type="assistant",
-                parent_message_id=assistant_parent_message_id,
+                telegram_message_id=plan.reply_to_message_id,
+                message_type="user",
+                parent_message_id=plan.user_parent_message_id,
                 provider=selection.model.provider,
                 model_id=selection.model.model_id,
                 model_alias=conversation.model_alias,
-                content="",
-                status="streaming",
-                commit=False,
+                content=plan.user_input.content,
+                images=plan.user_input.images,
+                parts=plan.user_input.parts,
+                status="complete",
+                created_at=timestamp,
             )
-            if inbox_update_ids:
-                self.storage.inbox.mark_updates_realized(
-                    update_ids=inbox_update_ids,
-                    user_message_id=user_message_id,
-                    assistant_message_id=assistant_message_id,
-                    commit=False,
-                )
+            await self._link_logical_message_telegram_ids(
+                chat_id=conversation.chat_id,
+                logical_message_id=user_message_id,
+                primary_telegram_message_id=plan.reply_to_message_id,
+                telegram_message_ids=plan.source_telegram_message_ids,
+            )
+            assistant_parent_message_id = user_message_id
 
-        self._assistant_completion_events[assistant_message_id] = asyncio.Event()
+        if assistant_parent_message_id is None:
+            raise RuntimeError("Turn plan does not have an assistant parent")
+
+        conversation_messages = await self._build_provider_conversation(assistant_parent_message_id)
+        request = ChatRequest(
+            model=selection.model,
+            conversation=conversation_messages,
+            system_prompt=conversation.system_prompt_override or self.system_prompt,
+            safety_identifier=self._build_safety_identifier(conversation.user_id),
+            requested_tools=selection.requested_tools,
+        )
+        assistant_message_id = await self.storage.conversations.create_message(
+            conversation_id=conversation.id,
+            chat_id=conversation.chat_id,
+            telegram_message_id=None,
+            message_type="assistant",
+            parent_message_id=assistant_parent_message_id,
+            provider=selection.model.provider,
+            model_id=selection.model.model_id,
+            model_alias=conversation.model_alias,
+            content="",
+            status="streaming",
+        )
+
         return PreparedTurn(
             chat_id=conversation.chat_id,
             user_id=conversation.user_id,
@@ -376,33 +347,13 @@ class ChatService:
             model_alias=conversation.model_alias,
         )
 
-    async def _send_pre_realization_reply(
-        self,
-        *,
-        api: TelegramBotAPI,
-        chat_id: int,
-        text: str,
-        reply_to_message_id: int,
-        inbox_update_ids: tuple[int, ...],
-    ) -> None:
-        if inbox_update_ids:
-            self.storage.inbox.mark_reply_started(update_ids=inbox_update_ids)
-        await api.send_message(
-            chat_id,
-            text,
-            reply_to_message_id=reply_to_message_id,
-        )
-        if inbox_update_ids:
-            self.storage.inbox.mark_reply_sent(update_ids=inbox_update_ids)
-
-    def _link_logical_message_telegram_ids(
+    async def _link_logical_message_telegram_ids(
         self,
         *,
         chat_id: int,
         logical_message_id: int,
         primary_telegram_message_id: int | None,
         telegram_message_ids: tuple[int, ...],
-        commit: bool = True,
     ) -> None:
         seen_ids: set[int] = set()
         if primary_telegram_message_id is not None:
@@ -411,47 +362,75 @@ class ChatService:
         for telegram_message_id in telegram_message_ids:
             if telegram_message_id <= 0 or telegram_message_id in seen_ids:
                 continue
-            self.storage.conversations.link_telegram_message(
+            await self.storage.conversations.link_telegram_message(
                 chat_id=chat_id,
                 telegram_message_id=telegram_message_id,
                 logical_message_id=logical_message_id,
                 part_index=0,
-                commit=commit,
             )
             seen_ids.add(telegram_message_id)
 
-    def _build_provider_conversation(self, message_id: int) -> list[ConversationMessage]:
+    async def _ensure_loaded_images(
+        self,
+        *,
+        api: TelegramBotAPI,
+        parts: tuple[ContentPart, ...],
+    ) -> tuple[ContentPart, ...]:
+        """Download telegram images and store in D1 BlobStore (content-addressed)."""
+        loaded_parts: list[ContentPart] = []
+        for part in parts:
+            if part.kind != "image" or part.image is None:
+                loaded_parts.append(part)
+                continue
+            image = part.image
+            if image.data is not None:
+                loaded_parts.append(part)
+                continue
+            if image.file_id is None:
+                loaded_parts.append(part)
+                continue
+            try:
+                data = await api.download_file_bytes(image.file_id)
+                stored = await self.storage.blobs.store_image(
+                    mime_type=image.mime_type,
+                    data=data,
+                )
+                loaded_parts.append(ContentPart(kind="image", image=stored))
+            except Exception:
+                logging.exception("Failed to download/store image file_id=%s", image.file_id)
+                loaded_parts.append(part)
+        return tuple(loaded_parts)
+
+    async def _build_provider_conversation(self, message_id: int) -> list[ConversationMessage]:
         conversation_messages: list[ConversationMessage] = []
-        for item in self.storage.conversations.build_thread(message_id):
+        thread = await self.storage.conversations.build_thread(message_id)
+        for item in thread:
             if item.message_type == "seed":
                 continue
+            # Load stored images from D1 BlobStore → memory for provider
+            loaded_parts: list[ContentPart] = []
+            for part in item.parts:
+                if part.kind == "image" and part.image is not None and part.image.sha256 is not None:
+                    data = await self.storage.blobs.load_image_bytes(part.image)
+                    loaded = ImageRef.loaded(mime_type=part.image.mime_type, data=data)
+                    loaded_parts.append(ContentPart(kind="image", image=loaded))
+                else:
+                    loaded_parts.append(part)
             conversation_messages.append(
                 ConversationMessage(
                     role=item.message_type,
                     content=item.content,
-                    parts=tuple(self._loaded_part_from_message_part(part) for part in item.parts),
+                    parts=tuple(loaded_parts),
                 )
             )
         return conversation_messages
-
-    def _loaded_part_from_message_part(self, part: ContentPart) -> ContentPart:
-        if part.kind == "text":
-            return ContentPart(kind="text", text=part.text)
-        assert part.image is not None
-        image = part.image
-        if image.data is not None:
-            loaded_image = image
-        else:
-            loaded_image = ImageRef.loaded(
-                mime_type=image.mime_type,
-                data=self.storage.blobs.load_image_bytes(image),
-            )
-        return ContentPart(kind="image", image=loaded_image)
 
     def _build_safety_identifier(self, user_id: int) -> str | None:
         if self.safety_identifier_salt is None:
             return None
         return hashlib.sha256(f"{self.safety_identifier_salt}{user_id}".encode("utf-8")).hexdigest()
+
+    # ── Conversation loop (streaming) ──
 
     async def _run_conversation_loop(self, *, api: TelegramBotAPI, prepared_turn: PreparedTurn) -> None:
         current_turn: PreparedTurn | None = prepared_turn
@@ -473,7 +452,7 @@ class ChatService:
 
             async def update_render(*, force: bool, final: bool, status: str) -> None:
                 persisted_status = "streaming" if final else status
-                self._persist_assistant_state(
+                await self._persist_assistant_state(
                     prepared_turn=current_turn,
                     session=session,
                     full_text=full_text,
@@ -484,7 +463,7 @@ class ChatService:
                 async def apply_render(*, render_markdown: bool | None) -> None:
                     used_markdown = final if render_markdown is None else render_markdown
                     if final:
-                        self._persist_assistant_render_state(
+                        await self._persist_assistant_render_state(
                             prepared_turn=current_turn,
                             phase="final_pending",
                             final_status=status,
@@ -496,13 +475,13 @@ class ChatService:
                     async def on_sent_message_id(index: int, _message_id: int) -> None:
                         if not final:
                             return
-                        self._sync_streaming_telegram_links(
+                        await self._sync_streaming_telegram_links(
                             chat_id=current_turn.chat_id,
                             logical_message_id=current_turn.assistant_message_id,
                             telegram_message_ids=session.message_ids,
                             linked_message_ids=linked_message_ids,
                         )
-                        self._persist_assistant_render_state(
+                        await self._persist_assistant_render_state(
                             prepared_turn=current_turn,
                             phase="final_pending",
                             final_status=status,
@@ -521,7 +500,7 @@ class ChatService:
                         force=force,
                         on_sent_message_id=on_sent_message_id if final else None,
                     )
-                    self._persist_assistant_state(
+                    await self._persist_assistant_state(
                         prepared_turn=current_turn,
                         session=session,
                         full_text=full_text,
@@ -529,7 +508,7 @@ class ChatService:
                         status=persisted_status,
                     )
                     if final:
-                        self._persist_assistant_render_state(
+                        await self._persist_assistant_render_state(
                             prepared_turn=current_turn,
                             phase="final_rendered",
                             final_status=status,
@@ -598,21 +577,20 @@ class ChatService:
                         current_turn.assistant_message_id,
                     )
 
-            next_turn_candidate: PendingTurnCandidate | None = None
-            async with self._conversation_locks[(current_turn.chat_id, current_turn.user_id)]:
-                next_turn_candidate = await self._finalize_turn_locked(
-                    api=api,
-                    prepared_turn=current_turn,
-                    session=session,
-                    full_text=full_text,
-                    final_status=final_status,
-                )
+            # After turn completes, check for pending messages
+            next_turn_candidate = await self._finalize_turn(
+                api=api,
+                prepared_turn=current_turn,
+                session=session,
+                full_text=full_text,
+                final_status=final_status,
+            )
             if next_turn_candidate is None:
                 current_turn = None
                 continue
             current_turn = await self._prepare_turn_from_candidate(api=api, candidate=next_turn_candidate)
 
-    def _persist_assistant_state(
+    async def _persist_assistant_state(
         self,
         *,
         prepared_turn: PreparedTurn,
@@ -622,19 +600,19 @@ class ChatService:
         status: str,
     ) -> None:
         stored_text = full_text if full_text.strip() else ""
-        self.storage.conversations.update_message(
+        await self.storage.conversations.update_message(
             prepared_turn.assistant_message_id,
             content=stored_text,
             status=status,
         )
-        self._sync_streaming_telegram_links(
+        await self._sync_streaming_telegram_links(
             chat_id=prepared_turn.chat_id,
             logical_message_id=prepared_turn.assistant_message_id,
             telegram_message_ids=session.message_ids,
             linked_message_ids=linked_message_ids,
         )
 
-    def _persist_assistant_render_state(
+    async def _persist_assistant_render_state(
         self,
         *,
         prepared_turn: PreparedTurn,
@@ -647,7 +625,7 @@ class ChatService:
         stored_reply_text = None
         if reply_text is not None:
             stored_reply_text = reply_text if reply_text.strip() else ""
-        self.storage.inbox.set_assistant_render_state(
+        await self.storage.inbox.set_assistant_render_state(
             assistant_message_id=prepared_turn.assistant_message_id,
             phase=phase,
             final_status=final_status,
@@ -656,7 +634,7 @@ class ChatService:
             render_markdown=render_markdown,
         )
 
-    def _sync_streaming_telegram_links(
+    async def _sync_streaming_telegram_links(
         self,
         *,
         chat_id: int,
@@ -667,7 +645,7 @@ class ChatService:
         for index, telegram_message_id in enumerate(telegram_message_ids):
             if telegram_message_id in linked_message_ids:
                 continue
-            self.storage.conversations.link_telegram_message(
+            await self.storage.conversations.link_telegram_message(
                 chat_id=chat_id,
                 telegram_message_id=telegram_message_id,
                 logical_message_id=logical_message_id,
@@ -675,7 +653,7 @@ class ChatService:
             )
             linked_message_ids.add(telegram_message_id)
 
-    async def _finalize_turn_locked(
+    async def _finalize_turn(
         self,
         *,
         api: TelegramBotAPI,
@@ -685,234 +663,37 @@ class ChatService:
         final_status: str,
     ) -> PendingTurnCandidate | None:
         stored_text = full_text if full_text.strip() else "(empty response)"
-        try:
-            self.storage.conversations.update_message(
-                prepared_turn.assistant_message_id,
-                content=stored_text,
-                status=final_status,
-            )
-            self._persist_assistant_render_state(
-                prepared_turn=prepared_turn,
-                phase=None,
-                final_status=None,
-                reply_text=None,
-                reasoning_blocks=(),
-                render_markdown=None,
-            )
-            for index, telegram_message_id in enumerate(session.message_ids):
-                self.storage.conversations.link_telegram_message(
-                    chat_id=prepared_turn.chat_id,
-                    telegram_message_id=telegram_message_id,
-                    logical_message_id=prepared_turn.assistant_message_id,
-                    part_index=index,
-                )
-        finally:
-            completion_event = self._assistant_completion_events.pop(prepared_turn.assistant_message_id, None)
-            if completion_event is not None:
-                completion_event.set()
-
-        return await self._prepare_next_pending_turn_locked(
-            api=api,
-            conversation_id=prepared_turn.conversation_id,
+        await self.storage.conversations.update_message(
+            prepared_turn.assistant_message_id,
+            content=stored_text,
+            status=final_status,
         )
-
-    async def _prepare_next_pending_turn_locked(
-        self,
-        *,
-        api: TelegramBotAPI,
-        conversation_id: int,
-    ) -> PendingTurnCandidate | None:
-        _ = api
-        pending_messages = self.storage.conversations.list_pending_messages(conversation_id=conversation_id)
-        if not pending_messages:
-            return None
-        return PendingTurnCandidate(
-            conversation_id=conversation_id,
-            pending_messages=tuple(pending_messages),
-        )
-
-    async def recover_interrupted_assistant_turn(
-        self,
-        *,
-        api: TelegramBotAPI,
-        assistant_message_id: int,
-        reply_to_message_id: int | None = None,
-        final_render_phase: str | None = None,
-        final_render_status: str | None = None,
-        final_render_reply_text: str | None = None,
-        final_render_reasoning_blocks: tuple[str, ...] = (),
-        final_render_markdown: bool | None = None,
-    ) -> bool:
-        message = self.storage.conversations.get_message(assistant_message_id)
-        if message is None or message.message_type != "assistant":
-            return False
-
-        conversation = self.storage.conversations.get_conversation(message.conversation_id)
-        if conversation is None:
-            return False
-
-        needs_interruption_recovery = message.status == "streaming"
-
-        if needs_interruption_recovery and final_render_phase == "final_rendered" and final_render_status is not None:
-            stored_text = final_render_reply_text if final_render_reply_text is not None else message.content
-            self.storage.conversations.update_message(
-                assistant_message_id,
-                content=stored_text,
-                status=final_render_status,
-            )
-            needs_interruption_recovery = False
-        elif needs_interruption_recovery and final_render_phase == "final_pending" and final_render_status is not None:
-            stored_text = final_render_reply_text if final_render_reply_text is not None else message.content
-            telegram_message_ids = self.storage.conversations.list_linked_telegram_message_ids(
-                logical_message_id=assistant_message_id,
-            )
-            session = ReplySession(
-                api,
-                chat_id=conversation.chat_id,
-                reply_to_message_id=reply_to_message_id or (telegram_message_ids[0] if telegram_message_ids else message.id),
-                prefix=f"[{message.model_alias or conversation.model_alias}] ",
-                limit=self.render_limit,
-                edit_interval_seconds=self.render_edit_interval_seconds,
-            )
-            session.message_ids = list(telegram_message_ids)
-
-            async def apply_final_recovery_render(*, render_markdown: bool | None) -> None:
-                await session.update(
-                    render_reply_text(
-                        stored_text,
-                        list(final_render_reasoning_blocks),
-                        final=True,
-                        render_markdown=render_markdown,
-                    ),
-                    force=True,
-                )
-
-            try:
-                await apply_final_recovery_render(render_markdown=final_render_markdown)
-            except Exception:
-                logging.exception(
-                    "Failed to recover formatted final assistant render for conversation %s assistant message %s",
-                    conversation.id,
-                    assistant_message_id,
-                )
-                if final_render_markdown is False:
-                    return False
-                else:
-                    try:
-                        await apply_final_recovery_render(render_markdown=False)
-                    except Exception:
-                        logging.exception(
-                            "Failed to recover plain-text final assistant render for conversation %s assistant message %s",
-                            conversation.id,
-                            assistant_message_id,
-                        )
-                        return False
-                    else:
-                        linked_message_ids = set(telegram_message_ids)
-                        self._sync_streaming_telegram_links(
-                            chat_id=conversation.chat_id,
-                            logical_message_id=assistant_message_id,
-                            telegram_message_ids=session.message_ids,
-                            linked_message_ids=linked_message_ids,
-                        )
-                        self.storage.conversations.update_message(
-                            assistant_message_id,
-                            content=stored_text,
-                            status=final_render_status,
-                        )
-                        needs_interruption_recovery = False
-            else:
-                linked_message_ids = set(telegram_message_ids)
-                self._sync_streaming_telegram_links(
-                    chat_id=conversation.chat_id,
-                    logical_message_id=assistant_message_id,
-                    telegram_message_ids=session.message_ids,
-                    linked_message_ids=linked_message_ids,
-                )
-                self.storage.conversations.update_message(
-                    assistant_message_id,
-                    content=stored_text,
-                    status=final_render_status,
-                )
-                needs_interruption_recovery = False
-
-        if needs_interruption_recovery:
-            interruption_note = "[interrupted: bot restarted before reply completed]"
-            if message.content.strip():
-                if interruption_note in message.content:
-                    stored_text = message.content
-                else:
-                    stored_text = f"{message.content}\n\n{interruption_note}"
-            else:
-                stored_text = interruption_note
-            telegram_message_ids = self.storage.conversations.list_linked_telegram_message_ids(
-                logical_message_id=assistant_message_id,
-            )
-            reply_target = telegram_message_ids[0] if telegram_message_ids else reply_to_message_id
-            if reply_target is None:
-                return False
-            session = ReplySession(
-                api,
-                chat_id=conversation.chat_id,
-                reply_to_message_id=reply_target,
-                prefix=f"[{message.model_alias or conversation.model_alias}] ",
-                limit=self.render_limit,
-                edit_interval_seconds=self.render_edit_interval_seconds,
-            )
-            session.message_ids = list(telegram_message_ids)
-            try:
-                await session.update(
-                    render_reply_text(stored_text, [], final=True),
-                    force=True,
-                )
-            except Exception:
-                logging.exception(
-                    "Failed to update interrupted assistant render for conversation %s assistant message %s",
-                    conversation.id,
-                    assistant_message_id,
-                )
-                return False
-            linked_message_ids = set(telegram_message_ids)
-            self._sync_streaming_telegram_links(
-                chat_id=conversation.chat_id,
-                logical_message_id=assistant_message_id,
-                telegram_message_ids=session.message_ids,
-                linked_message_ids=linked_message_ids,
-            )
-            self.storage.conversations.update_message(
-                assistant_message_id,
-                content=stored_text,
-                status="failed",
-            )
-        else:
-            stored_text = message.content
-
-        self.storage.inbox.set_assistant_render_state(
-            assistant_message_id=assistant_message_id,
+        await self.storage.inbox.set_assistant_render_state(
+            assistant_message_id=prepared_turn.assistant_message_id,
             phase=None,
             final_status=None,
             reply_text=None,
             reasoning_blocks=(),
             render_markdown=None,
         )
-        completion_event = self._assistant_completion_events.pop(assistant_message_id, None)
-        if completion_event is not None:
-            completion_event.set()
-
-        next_turn_candidate: PendingTurnCandidate | None = None
-        lock_key = (conversation.chat_id, conversation.user_id)
-        async with self._conversation_locks[lock_key]:
-            next_turn_candidate = await self._prepare_next_pending_turn_locked(
-                api=api,
-                conversation_id=conversation.id,
+        for index, telegram_message_id in enumerate(session.message_ids):
+            await self.storage.conversations.link_telegram_message(
+                chat_id=prepared_turn.chat_id,
+                telegram_message_id=telegram_message_id,
+                logical_message_id=prepared_turn.assistant_message_id,
+                part_index=index,
             )
-        if next_turn_candidate is None:
-            return True
-        prepared_turn = await self._prepare_turn_from_candidate(api=api, candidate=next_turn_candidate)
-        if prepared_turn is None:
-            return True
-        await self._run_conversation_loop(api=api, prepared_turn=prepared_turn)
-        return True
+
+        # Check for pending messages
+        pending_messages = await self.storage.conversations.list_pending_messages(
+            conversation_id=prepared_turn.conversation_id,
+        )
+        if not pending_messages:
+            return None
+        return PendingTurnCandidate(
+            conversation_id=prepared_turn.conversation_id,
+            pending_messages=tuple(pending_messages),
+        )
 
     async def _prepare_turn_from_candidate(
         self,
@@ -920,60 +701,25 @@ class ChatService:
         api: TelegramBotAPI,
         candidate: PendingTurnCandidate,
     ) -> PreparedTurn | None:
-        conversation = self.storage.conversations.get_conversation(candidate.conversation_id)
+        conversation = await self.storage.conversations.get_conversation(candidate.conversation_id)
         if conversation is None:
             return None
-        lock_key = (conversation.chat_id, conversation.user_id)
-        async with self._turn_claim_locks[lock_key]:
-            successful_pending_messages: list[PendingMessage] = []
-            processed_pending_ids: list[int] = []
-            for pending_message in candidate.pending_messages:
-                try:
-                    stored_user_input = await self._store_user_input_images(
-                        api=api,
-                        user_input=self.engine._stored_user_input_from_pending_message(pending_message),
-                    )
-                except Exception as exc:
-                    logging.error(
-                        "Failed to ingest image input for chat %s user %s message %s",
-                        conversation.chat_id,
-                        conversation.user_id,
-                        pending_message.telegram_message_id,
-                        exc_info=(type(exc), exc, exc.__traceback__),
-                    )
-                    await self._send_image_download_error(
-                        api=api,
-                        chat_id=conversation.chat_id,
-                        reply_to_message_id=pending_message.telegram_message_id,
-                    )
-                    processed_pending_ids.append(pending_message.id)
-                    continue
 
-                successful_pending_messages.append(
-                    replace(
-                        pending_message,
-                        images=stored_user_input.images,
-                        parts=stored_user_input.parts,
-                    )
-                )
-                processed_pending_ids.append(pending_message.id)
+        pending_messages_list = list(candidate.pending_messages)
+        if not pending_messages_list:
+            return None
 
-            if not processed_pending_ids:
-                return None
+        await self.storage.conversations.delete_pending_messages(
+            pending_message_ids=tuple(pm.id for pm in pending_messages_list),
+        )
 
-            async with self._conversation_locks[lock_key]:
-                self.storage.conversations.delete_pending_messages(
-                    pending_message_ids=tuple(processed_pending_ids),
-                )
-                if not successful_pending_messages:
-                    return None
-                turn_plan = self.engine.build_pending_turn(
-                    conversation_id=candidate.conversation_id,
-                    pending_messages=successful_pending_messages,
-                )
-                if turn_plan is None:
-                    return None
-                return await self._realize_turn_locked(api=api, plan=turn_plan)
+        turn_plan = await self.engine.build_pending_turn(
+            conversation_id=candidate.conversation_id,
+            pending_messages=pending_messages_list,
+        )
+        if turn_plan is None:
+            return None
+        return await self._realize_turn(api=api, plan=turn_plan)
 
     def _build_user_input(
         self,
@@ -999,98 +745,3 @@ class ChatService:
             images=normalized_image_tuple,
             parts=tuple(normalized_parts) if normalized_parts else build_content_parts(content, normalized_image_tuple),
         )
-
-    async def _store_turn_plan_images(
-        self,
-        *,
-        api: TelegramBotAPI,
-        plan: TurnPlan,
-    ) -> TurnPlan:
-        if plan.user_input is None:
-            return plan
-        stored_user_input = await self._store_user_input_images(api=api, user_input=plan.user_input)
-        return replace(plan, user_input=stored_user_input)
-
-    async def _try_store_turn_plan_images(
-        self,
-        *,
-        api: TelegramBotAPI,
-        plan: TurnPlan,
-    ) -> TurnPlan | None:
-        try:
-            return await self._store_turn_plan_images(api=api, plan=plan)
-        except Exception as exc:
-            logging.error(
-                "Failed to ingest image input for chat %s user %s message %s",
-                plan.conversation.chat_id,
-                plan.conversation.user_id,
-                plan.reply_to_message_id,
-                exc_info=(type(exc), exc, exc.__traceback__),
-            )
-            self.storage.conversations.delete_conversation_if_empty(plan.conversation.id)
-            await self._send_image_download_error(
-                api=api,
-                chat_id=plan.conversation.chat_id,
-                reply_to_message_id=plan.reply_to_message_id,
-            )
-            return None
-
-    async def _store_user_input_images(
-        self,
-        *,
-        api: TelegramBotAPI,
-        user_input: StoredUserInput,
-    ) -> StoredUserInput:
-        effective_parts = user_input.parts or build_content_parts(user_input.content, user_input.images)
-        if not user_input.images:
-            return user_input
-
-        stored_parts: list[ContentPart] = []
-        stored_images: list[ImageRef] = []
-        for part in effective_parts:
-            if part.kind == "text":
-                stored_parts.append(ContentPart(kind="text", text=part.text))
-                continue
-            if part.image is None:
-                continue
-            image = part.image
-            if image.kind == "stored":
-                stored_image = image
-            elif image.kind == "telegram":
-                assert image.file_id is not None
-                image_bytes = await api.download_file_bytes(image.file_id)
-                stored_image = self.storage.blobs.store_image(mime_type=image.mime_type, data=image_bytes)
-            elif image.kind == "loaded":
-                assert image.data is not None
-                stored_image = self.storage.blobs.store_image(mime_type=image.mime_type, data=image.data)
-            else:
-                raise ValueError(f"Unsupported image ref kind: {image.kind}")
-            stored_images.append(stored_image)
-            stored_parts.append(ContentPart(kind="image", image=stored_image))
-
-        stored_image_tuple = tuple(stored_images)
-        return StoredUserInput(
-            content=user_input.content,
-            images=stored_image_tuple,
-            parts=tuple(stored_parts) if stored_parts else build_content_parts(user_input.content, stored_image_tuple),
-        )
-
-    async def _send_image_download_error(
-        self,
-        *,
-        api: TelegramBotAPI,
-        chat_id: int,
-        reply_to_message_id: int,
-    ) -> None:
-        try:
-            await api.send_message(
-                chat_id,
-                "Failed to download the image from Telegram. Please resend it and try again.",
-                reply_to_message_id=reply_to_message_id,
-            )
-        except Exception:
-            logging.exception(
-                "Failed to send image download error reply for chat %s message %s",
-                chat_id,
-                reply_to_message_id,
-            )
