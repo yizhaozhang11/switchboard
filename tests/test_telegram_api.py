@@ -105,6 +105,57 @@ class TelegramBotAPITests(unittest.IsolatedAsyncioTestCase):
 
         self.assertEqual(str(ctx.exception), "Bad Request: message is not modified")
 
+    async def test_request_retries_telegram_rate_limit_response(self) -> None:
+        slept: list[float] = []
+
+        async def fake_sleep(seconds: float) -> None:
+            slept.append(seconds)
+
+        api = TelegramBotAPI("test-token", sleep=fake_sleep)
+        api._client = FakeClient(
+            [
+                FakeResponse(
+                    status_code=429,
+                    json_data={
+                        "ok": False,
+                        "error_code": 429,
+                        "description": "Too Many Requests: retry after 32",
+                        "parameters": {"retry_after": 32},
+                    },
+                ),
+                FakeResponse(json_data={"ok": True, "result": {"message_id": 123}}),
+            ]
+        )
+
+        with self.assertLogs(level="WARNING") as captured:
+            result = await api.request("sendMessage", {"chat_id": 1, "text": "hello"})
+
+        self.assertEqual(result, {"message_id": 123})
+        self.assertEqual(slept, [32.0])
+        self.assertEqual(len(api._client.calls), 2)
+        self.assertIn("Telegram API rate limited sendMessage; retrying after 32.0 seconds", captured.output[0])
+
+    async def test_request_exposes_retry_after_when_retry_budget_is_exhausted(self) -> None:
+        api = TelegramBotAPI("test-token", max_rate_limit_retries=0)
+        api._client = FakeClient(
+            [
+                FakeResponse(
+                    status_code=429,
+                    json_data={
+                        "ok": False,
+                        "error_code": 429,
+                        "description": "Too Many Requests: retry after 32",
+                    },
+                ),
+            ]
+        )
+
+        with self.assertRaises(TelegramAPIError) as ctx:
+            await api.request("editMessageText", {"chat_id": 1, "message_id": 2, "text": "same"})
+
+        self.assertEqual(str(ctx.exception), "Too Many Requests: retry after 32")
+        self.assertEqual(ctx.exception.retry_after, 32.0)
+
     async def test_edit_message_text_ignores_message_not_modified_http_400(self) -> None:
         api = TelegramBotAPI("test-token")
         api._client = FakeClient(
