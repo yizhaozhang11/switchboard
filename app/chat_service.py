@@ -568,6 +568,16 @@ class ChatService:
                             if reasoning_blocks and reasoning_blocks[-1].strip():
                                 reasoning_blocks.append("")
                         elif event.kind == "error":
+                            logging.error(
+                                "Provider stream error for conversation %s assistant message %s "
+                                "model_alias=%s provider=%s model_id=%s: %s",
+                                current_turn.conversation_id,
+                                current_turn.assistant_message_id,
+                                current_turn.model_alias,
+                                current_turn.request.model.provider,
+                                current_turn.request.model.model_id,
+                                event.text,
+                            )
                             if full_text:
                                 full_text += "\n\n"
                             full_text += f"[error] {event.text}"

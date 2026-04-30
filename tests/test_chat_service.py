@@ -2,6 +2,7 @@ from __future__ import annotations
 
 import asyncio
 import hashlib
+import logging
 import sys
 import tempfile
 import types
@@ -1533,6 +1534,21 @@ class ChatServiceTests(unittest.IsolatedAsyncioTestCase):
         final_render = self.api.edits[-1] if self.api.edits else self.api.sent_messages[-1]
         self.assertEqual(final_render["text"], "[o] bold")
         self.assertEqual(final_render["entities"], [{"type": "bold", "offset": 4, "length": 4}])
+
+    async def test_provider_stream_error_is_logged(self) -> None:
+        self.provider.request_events[1] = [
+            StreamEvent(kind="error", text="rate limit exceeded: slow down"),
+        ]
+
+        with self.assertLogs(level=logging.ERROR) as captured:
+            await self._send_plain(message_id=1, text="fail")
+
+        self.assertEqual(self.api.sent_messages[-1]["text"], "[o] [error] rate limit exceeded: slow down")
+        self.assertIn(
+            "Provider stream error for conversation 1 assistant message 2 "
+            "model_alias=o provider=fake model_id=default-model: rate limit exceeded: slow down",
+            "\n".join(captured.output),
+        )
 
     async def test_streaming_state_is_persisted_before_telegram_send_and_edit(self) -> None:
         send_checks = 0
