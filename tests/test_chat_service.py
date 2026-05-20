@@ -365,6 +365,18 @@ class ChatServiceTests(unittest.IsolatedAsyncioTestCase):
         self.assertEqual(self.provider.requests[1].system_prompt, "system")
         self.assertEqual([message.content for message in self.provider.requests[1].conversation], ["fresh"])
 
+    async def test_new_without_content_triggers_empty_turn(self) -> None:
+        await self._send_new(message_id=1, text="")
+
+        self.assertEqual(self._conversation_ids(), [1])
+        self.assertEqual([message.content for message in self.provider.requests[0].conversation], [""])
+        self.assertEqual(
+            [part.text for part in self.provider.requests[0].conversation[0].parts],
+            [" "],
+        )
+        user_messages = self._message_rows(message_type="user", conversation_id=1)
+        self.assertEqual(user_messages[0].content, "")
+
     async def test_choose_model_reply_to_seed_preserves_seed_metadata(self) -> None:
         await self._send_system_prompt(message_id=1, prompt="be concise")
         await self._send_choose_model(message_id=2, alias="o", text="hello", reply_to_message_id=1)
@@ -384,7 +396,8 @@ class ChatServiceTests(unittest.IsolatedAsyncioTestCase):
         text = self.service.command_help_text(topic="new", settings=self.settings)
         self.assertIsNotNone(text)
         assert text is not None
-        self.assertIn("/new <content>", text)
+        self.assertIn("/new [content]", text)
+        self.assertIn("Without content", text)
         self.assertIn("chat default model alias o", text)
         self.assertIn("seed state whose visible history is empty", text)
 

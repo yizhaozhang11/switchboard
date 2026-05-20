@@ -139,11 +139,12 @@ class RouterTests(unittest.TestCase):
         self.assertIsNone(action.model_alias)
         self.assertEqual(action.intent, "new")
 
-    def test_new_command_without_content_is_usage_error(self) -> None:
+    def test_new_command_without_content_routes_empty_trigger(self) -> None:
         action = self.router.route(make_message(text="/new"), make_settings())
-        self.assertIsInstance(action, CommandAction)
-        assert isinstance(action, CommandAction)
-        self.assertEqual(action.name, "usage_error")
+        self.assertIsInstance(action, ChatAction)
+        assert isinstance(action, ChatAction)
+        self.assertEqual(action.content, "")
+        self.assertEqual(action.intent, "new")
 
     def test_new_command_allows_image_only_message(self) -> None:
         action = self.router.route(

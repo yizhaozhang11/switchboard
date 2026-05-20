@@ -95,8 +95,6 @@ class Router:
             inline_parts = head.split(maxsplit=1)
             inline_content = inline_parts[1] if len(inline_parts) == 2 else ""
             content = self._combine_command_content(inline_content, has_newline, remainder)
-            if not content and not images:
-                return CommandAction(name="usage_error", content="Usage: /new <content>")
             return ChatAction(
                 content=content,
                 intent="new",

@@ -40,7 +40,7 @@ Core commands:
 - `/models`
 - `/model <alias>`
 - `/c <alias> <message>`
-- `/new <message>`
+- `/new [message]`
 - `/s <prompt>`
 - `/mode auto|mention|off`
 - `/togglechat [chat_id]`

@@ -25,6 +25,9 @@ from app.types import (
 )
 
 
+EMPTY_LLM_TRIGGER_TEXT = " "
+
+
 @dataclass(frozen=True)
 class PreparedTurn:
     chat_id: int
@@ -93,7 +96,7 @@ class ChatService:
                 "- /ping - show chat and user IDs, reply mode, and default model",
                 "- /models - list available model aliases",
                 "- /c <alias> <content> - send one message with a specific model",
-                "- /new <content> - start a fresh conversation",
+                "- /new [content] - start a fresh conversation",
                 "- /s <prompt> - set a system prompt override for a conversation",
                 "",
                 "Chat settings:",
@@ -114,8 +117,9 @@ class ChatService:
         if normalized_topic == "new":
             return "\n".join(
                 [
-                    "/new <content>",
+                    "/new [content]",
                     f"- Starts a fresh conversation with the chat default model alias {settings.default_model_alias}.",
+                    "- Without content, it sends an empty turn to trigger model output from the system prompt.",
                     "- If you reply to a seed state whose visible history is empty, it materializes that seeded branch instead of starting from scratch.",
                     "- It does not continue newer sibling branches from elsewhere in the conversation tree.",
                 ]
@@ -993,6 +997,9 @@ class ChatService:
         parts: tuple[ContentPart, ...],
     ) -> StoredUserInput:
         effective_parts = parts or build_content_parts(content, images)
+        if not content and not images and not effective_parts:
+            # Keep visible content empty while giving providers a non-empty user turn.
+            effective_parts = (ContentPart(kind="text", text=EMPTY_LLM_TRIGGER_TEXT),)
         normalized_parts: list[ContentPart] = []
         normalized_images: list[ImageRef] = []
         for part in effective_parts:
