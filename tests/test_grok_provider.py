@@ -105,7 +105,7 @@ class GrokProviderTests(unittest.IsolatedAsyncioTestCase):
             models=[
                 ModelSpec(
                     provider="grok",
-                    model_id="grok-4-1-fast-reasoning",
+                    model_id="grok-4.3",
                     aliases=("x",),
                     supports_images=True,
                     supports_reasoning=True,
@@ -146,7 +146,7 @@ class GrokProviderTests(unittest.IsolatedAsyncioTestCase):
         self.assertEqual(client.base_url, XAI_BASE_URL)
         self.assertEqual(client.api_key, "test-key")
         call = client.chat.completions.calls[0]
-        self.assertEqual(call["model"], "grok-4-1-fast-reasoning")
+        self.assertEqual(call["model"], "grok-4.3")
         self.assertTrue(call["stream"])
         self.assertEqual(call["reasoning_effort"], "high")
         self.assertEqual(

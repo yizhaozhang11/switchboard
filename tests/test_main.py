@@ -131,7 +131,7 @@ class MainTests(unittest.TestCase):
         self.assertIsNotNone(resolved)
         assert resolved is not None
         self.assertEqual(resolved.model.provider, "grok")
-        self.assertEqual(resolved.model.model_id, "grok-4-1-fast-reasoning")
+        self.assertEqual(resolved.model.model_id, "grok-4.3")
 
     def test_async_main_wraps_startup_configuration_errors(self) -> None:
         with mock.patch("app.main.Config.from_env", side_effect=RuntimeError("TELEGRAM_BOT_TOKEN is required")):

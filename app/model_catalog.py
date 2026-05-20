@@ -16,6 +16,7 @@ DEFAULT_MODEL_CONFIG_BASENAME = "models.toml"
 KNOWN_PROVIDERS = ("openai", "gemini", "claude", "grok")
 OPENAI_REASONING_EFFORT_VALUES = frozenset({"minimal", "none", "low", "medium", "high", "xhigh"})
 GEMINI_REASONING_EFFORT_VALUES = frozenset({"minimal", "low", "medium", "high"})
+GROK_REASONING_EFFORT_VALUES = frozenset({"none", "low", "medium", "high"})
 CLAUDE_OUTPUT_EFFORT_VALUES = frozenset({"low", "medium", "high", "xhigh", "max"})
 DEFAULT_MODEL_CATALOG_TEXT = """# Edit this file to change model ids or aliases without changing bot code.
 # Restart the bot after updates.
@@ -92,67 +93,10 @@ thinking_mode = "enabled"
 thinking_budget_tokens = 2048
 
 [[providers.grok.models]]
-model_id = "grok-4-1-fast-reasoning"
-aliases = ["x", "grok-4-1-fast-reasoning"]
+model_id = "grok-4.3"
+aliases = ["x", "grok-4.3"]
 supports_images = true
 supports_reasoning = true
-
-[[providers.grok.models]]
-model_id = "grok-4-1-fast-non-reasoning"
-aliases = ["grok-4-1-fast-non-reasoning"]
-supports_images = true
-
-[[providers.grok.models]]
-model_id = "grok-code-fast-1"
-aliases = ["grok-code-fast-1"]
-
-[[providers.grok.models]]
-model_id = "grok-4-fast-reasoning"
-aliases = ["x4", "grok-4-fast-reasoning"]
-supports_images = true
-supports_reasoning = true
-
-[[providers.grok.models]]
-model_id = "grok-4-fast-non-reasoning"
-aliases = ["grok-4-fast-non-reasoning"]
-supports_images = true
-
-[[providers.grok.models]]
-model_id = "grok-4-0709"
-aliases = ["grok-4-0709"]
-supports_images = true
-supports_reasoning = true
-
-[[providers.grok.models]]
-model_id = "grok-3-fast"
-aliases = ["x3", "grok-3-fast"]
-supports_images = true
-
-[[providers.grok.models]]
-model_id = "grok-3-mini-fast"
-aliases = ["x3m", "grok-3-mini-fast"]
-supports_images = true
-supports_reasoning = true
-
-[[providers.grok.models]]
-model_id = "grok-3"
-aliases = ["grok-3"]
-supports_images = true
-
-[[providers.grok.models]]
-model_id = "grok-3-mini"
-aliases = ["grok-3-mini"]
-supports_images = true
-supports_reasoning = true
-
-[[providers.grok.models]]
-model_id = "grok-2-1212"
-aliases = ["x2", "grok-2-1212"]
-
-[[providers.grok.models]]
-model_id = "grok-2-vision-1212"
-aliases = ["grok-2-vision-1212"]
-supports_images = true
 """
 
 
@@ -281,6 +225,12 @@ def _validate_provider_model_constraints(
     if provider_name == "gemini":
         if reasoning_effort is not None and reasoning_effort not in GEMINI_REASONING_EFFORT_VALUES:
             allowed_values = ", ".join(sorted(GEMINI_REASONING_EFFORT_VALUES))
+            raise RuntimeError(f"{path_label}.reasoning_effort must be one of: {allowed_values}")
+        return
+
+    if provider_name == "grok":
+        if reasoning_effort is not None and reasoning_effort not in GROK_REASONING_EFFORT_VALUES:
+            allowed_values = ", ".join(sorted(GROK_REASONING_EFFORT_VALUES))
             raise RuntimeError(f"{path_label}.reasoning_effort must be one of: {allowed_values}")
         return
 
