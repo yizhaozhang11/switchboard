@@ -45,6 +45,23 @@ class ConfigTests(unittest.TestCase):
 
         self.assertEqual(config.default_model_alias, "c")
 
+    def test_from_env_infers_grok_default_model_alias_when_unset(self) -> None:
+        with tempfile.TemporaryDirectory() as tempdir:
+            root_dir = Path(tempdir)
+            (root_dir / ".env").write_text(
+                "\n".join(
+                    [
+                        "TELEGRAM_BOT_TOKEN=test-token",
+                        "XAI_API_KEY=xai-key",
+                    ]
+                )
+            )
+
+            with mock.patch.dict(os.environ, {}, clear=True):
+                config = Config.from_env(root_dir)
+
+        self.assertEqual(config.default_model_alias, "x")
+
     def test_from_env_bootstraps_model_catalog_in_data_dir(self) -> None:
         with tempfile.TemporaryDirectory() as tempdir:
             root_dir = Path(tempdir)
@@ -399,6 +416,36 @@ class ConfigTests(unittest.TestCase):
             with mock.patch.dict(os.environ, {}, clear=True):
                 with self.assertRaisesRegex(RuntimeError, "reasoning_effort is not supported"):
                     Config.from_env(root_dir)
+
+    def test_from_env_parses_grok_reasoning_effort(self) -> None:
+        with tempfile.TemporaryDirectory() as tempdir:
+            root_dir = Path(tempdir)
+            custom_catalog_path = root_dir / "models.toml"
+            custom_catalog_path.write_text(
+                "\n".join(
+                    [
+                        "[[providers.grok.models]]",
+                        'model_id = "grok-4-1-fast-reasoning"',
+                        'aliases = ["x"]',
+                        "supports_reasoning = true",
+                        'reasoning_effort = "high"',
+                    ]
+                )
+            )
+            (root_dir / ".env").write_text(
+                "\n".join(
+                    [
+                        "TELEGRAM_BOT_TOKEN=test-token",
+                        "BOT_MODEL_CONFIG_PATH=models.toml",
+                        "XAI_API_KEY=xai-key",
+                    ]
+                )
+            )
+
+            with mock.patch.dict(os.environ, {}, clear=True):
+                config = Config.from_env(root_dir)
+
+        self.assertEqual(config.model_catalog["grok"][0].reasoning_effort, "high")
 
     def test_from_env_reads_safety_identifier_salt(self) -> None:
         with tempfile.TemporaryDirectory() as tempdir:

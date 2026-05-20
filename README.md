@@ -17,7 +17,7 @@ conda activate switchboard
 cp .env.example .env
 ```
 
-Edit `.env` before starting the bot. At minimum, set `TELEGRAM_BOT_TOKEN` and one provider key: `OPENAI_API_KEY`, `GEMINI_API_KEY`, or `ANTHROPIC_API_KEY`. The copied example is a template with blank secrets, so running immediately after `cp .env.example .env` is expected to fail.
+Edit `.env` before starting the bot. At minimum, set `TELEGRAM_BOT_TOKEN` and one provider key: `OPENAI_API_KEY`, `GEMINI_API_KEY`, `ANTHROPIC_API_KEY`, or `XAI_API_KEY`. The copied example is a template with blank secrets, so running immediately after `cp .env.example .env` is expected to fail.
 
 Then run:
 
@@ -35,7 +35,7 @@ pip install -r requirements.txt
 cp .env.example .env
 ```
 
-Edit `.env` before starting the bot. At minimum, set `TELEGRAM_BOT_TOKEN` and one provider key: `OPENAI_API_KEY`, `GEMINI_API_KEY`, or `ANTHROPIC_API_KEY`. The copied example is a template with blank secrets, so running immediately after `cp .env.example .env` is expected to fail.
+Edit `.env` before starting the bot. At minimum, set `TELEGRAM_BOT_TOKEN` and one provider key: `OPENAI_API_KEY`, `GEMINI_API_KEY`, `ANTHROPIC_API_KEY`, or `XAI_API_KEY`. The copied example is a template with blank secrets, so running immediately after `cp .env.example .env` is expected to fail.
 
 Then run:
 
@@ -71,7 +71,7 @@ Commands such as `/help` can respond before a chat is allowlisted, but allowlist
 Required environment:
 
 - `TELEGRAM_BOT_TOKEN`
-- at least one provider key: `OPENAI_API_KEY`, `GEMINI_API_KEY`, or `ANTHROPIC_API_KEY`
+- at least one provider key: `OPENAI_API_KEY`, `GEMINI_API_KEY`, `ANTHROPIC_API_KEY`, or `XAI_API_KEY`
 
 Optional but useful:
 
@@ -92,7 +92,7 @@ Notes:
 - if you set `BOT_DEFAULT_MODEL_ALIAS`, it must match one of the configured model aliases
 - `SAFETY_IDENTIFIER_SALT`, when set, must be at least 16 characters long
 - the model catalog defaults to `${BOT_DATA_DIR}/models.toml`
-- reasoning-capable OpenAI and Gemini entries can set `reasoning_effort` in the model catalog
+- reasoning-capable OpenAI, Gemini, and Grok entries can set `reasoning_effort` in the model catalog
 
 ## Running
 

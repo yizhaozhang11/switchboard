@@ -116,6 +116,14 @@ class RegistryTests(unittest.TestCase):
         registry = ProviderRegistry([provider])
         self.assertIsNone(registry.resolve_selection("alias-u"))
 
+    def test_resolve_selection_rejects_tool_suffix_for_grok(self) -> None:
+        provider = DummyProvider(
+            "dummy",
+            ModelSpec(provider="grok", model_id="model-a", aliases=("alias",), supports_tools=True),
+        )
+        registry = ProviderRegistry([provider])
+        self.assertIsNone(registry.resolve_selection("alias-s"))
+
 
 if __name__ == "__main__":
     unittest.main()

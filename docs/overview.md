@@ -8,7 +8,7 @@ Use [README.md](../README.md) for setup. Use this document to understand how the
 
 - replies in allowlisted chats or for allowlisted users
 - stores history in SQLite with local attachment storage
-- supports OpenAI, Gemini, and Claude providers
+- supports OpenAI, Gemini, Claude, and Grok providers
 - handles text messages plus Telegram image inputs and albums
 - keeps model selection and conversation control in Telegram commands
 

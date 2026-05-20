@@ -9,6 +9,7 @@ from app.chat_service import ChatService
 from app.config import Config
 from app.providers.claude import ClaudeProvider
 from app.providers.gemini import GeminiProvider
+from app.providers.grok import GrokProvider
 from app.providers.openai import OpenAIProvider
 from app.providers.registry import ProviderRegistry
 from app.storage import Storage
@@ -70,9 +71,13 @@ def build_registry(config: Config) -> ProviderRegistry:
     if config.anthropic_api_key:
         providers.append(ClaudeProvider(config.anthropic_api_key, _provider_models(config, "claude")))
 
+    if config.xai_api_key:
+        providers.append(GrokProvider(config.xai_api_key, _provider_models(config, "grok")))
+
     if not providers:
         raise RuntimeError(
-            "No providers are configured. Set OPENAI_API_KEY, GEMINI_API_KEY, and/or ANTHROPIC_API_KEY."
+            "No providers are configured. Set OPENAI_API_KEY, GEMINI_API_KEY, "
+            "ANTHROPIC_API_KEY, and/or XAI_API_KEY."
         )
 
     registry = ProviderRegistry(providers)

@@ -41,6 +41,7 @@ class MainTests(unittest.TestCase):
         openai_api_key: str | None = None,
         gemini_api_key: str | None = None,
         anthropic_api_key: str | None = None,
+        xai_api_key: str | None = None,
         default_model_alias: str = "o",
         model_catalog: dict[str, tuple[ModelSpec, ...]] | None = None,
     ) -> Config:
@@ -52,6 +53,7 @@ class MainTests(unittest.TestCase):
             openai_api_key=openai_api_key,
             gemini_api_key=gemini_api_key,
             anthropic_api_key=anthropic_api_key,
+            xai_api_key=xai_api_key,
             owner_user_ids=(),
             default_model_alias=default_model_alias,
             default_reply_mode="auto",
@@ -122,6 +124,14 @@ class MainTests(unittest.TestCase):
         assert resolved is not None
         self.assertEqual(resolved.model.provider, "claude")
         self.assertEqual(resolved.model.model_id, "claude-opus-4-6")
+
+    def test_build_registry_adds_grok_models_when_configured(self) -> None:
+        registry = build_registry(self._make_config(xai_api_key="xai-key", default_model_alias="x"))
+        resolved = registry.resolve("x")
+        self.assertIsNotNone(resolved)
+        assert resolved is not None
+        self.assertEqual(resolved.model.provider, "grok")
+        self.assertEqual(resolved.model.model_id, "grok-4-1-fast-reasoning")
 
     def test_async_main_wraps_startup_configuration_errors(self) -> None:
         with mock.patch("app.main.Config.from_env", side_effect=RuntimeError("TELEGRAM_BOT_TOKEN is required")):

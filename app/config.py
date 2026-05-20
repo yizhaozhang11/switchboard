@@ -51,12 +51,14 @@ def infer_default_model_alias(
     openai_api_key: str | None,
     gemini_api_key: str | None,
     anthropic_api_key: str | None,
+    xai_api_key: str | None,
     model_catalog: ModelCatalog,
 ) -> str:
     provider_keys = (
         ("openai", openai_api_key),
         ("gemini", gemini_api_key),
         ("claude", anthropic_api_key),
+        ("grok", xai_api_key),
     )
     for provider_name, api_key in provider_keys:
         if not api_key:
@@ -73,6 +75,7 @@ class Config:
     openai_api_key: str | None
     gemini_api_key: str | None
     anthropic_api_key: str | None
+    xai_api_key: str | None
     owner_user_ids: tuple[int, ...]
     default_model_alias: str
     default_reply_mode: str
@@ -120,11 +123,13 @@ class Config:
         openai_api_key = os.getenv("OPENAI_API_KEY") or None
         gemini_api_key = os.getenv("GEMINI_API_KEY") or None
         anthropic_api_key = os.getenv("ANTHROPIC_API_KEY") or None
+        xai_api_key = os.getenv("XAI_API_KEY") or None
         raw_default_model_alias = os.getenv("BOT_DEFAULT_MODEL_ALIAS", "").strip()
         default_model_alias = raw_default_model_alias or infer_default_model_alias(
             openai_api_key=openai_api_key,
             gemini_api_key=gemini_api_key,
             anthropic_api_key=anthropic_api_key,
+            xai_api_key=xai_api_key,
             model_catalog=model_catalog,
         )
         conversation_timeout_seconds = int(os.getenv("BOT_CONVERSATION_TIMEOUT_SECONDS", "300"))
@@ -139,6 +144,7 @@ class Config:
             openai_api_key=openai_api_key,
             gemini_api_key=gemini_api_key,
             anthropic_api_key=anthropic_api_key,
+            xai_api_key=xai_api_key,
             owner_user_ids=parse_owner_ids(os.getenv("BOT_OWNER_USER_IDS", "")),
             default_model_alias=default_model_alias,
             default_reply_mode=default_reply_mode,

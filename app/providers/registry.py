@@ -12,6 +12,7 @@ PROVIDER_REQUESTED_TOOL_ALIASES: dict[str, dict[str, RequestedTool]] = {
     "openai": DEFAULT_REQUESTED_TOOL_ALIASES,
     "gemini": {"s": "search", "u": "fetch"},
     "claude": {"s": "search", "u": "fetch"},
+    "grok": {},
 }
 
 
