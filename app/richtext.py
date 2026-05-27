@@ -98,6 +98,15 @@ class RichText:
             [MessageEntity(type=entity_type, offset=entity_offset, length=entity_length)],
         )
 
+    @classmethod
+    def pre(cls, text: str, *, language: str | None = None) -> "RichText":
+        if not text:
+            return cls(text)
+        return cls(
+            text,
+            [MessageEntity(type="pre", offset=0, length=utf16_len(text), language=language)],
+        )
+
     def __len__(self) -> int:
         return len(self.text)
 

@@ -411,6 +411,99 @@ class ChatServiceTests(unittest.IsolatedAsyncioTestCase):
     def test_command_help_text_for_unknown_topic_returns_none(self) -> None:
         self.assertIsNone(self.service.command_help_text(topic="mode", settings=self.settings))
 
+    async def test_raw_command_without_reply_uses_latest_assistant_without_timeout(self) -> None:
+        self.provider.request_events[1] = [
+            StreamEvent(kind="text_delta", text="**bold** and `code`"),
+            StreamEvent(kind="done"),
+        ]
+        await self._send_plain(message_id=1, text="first")
+        self.storage._conn.execute(
+            "UPDATE messages SET created_at = ? WHERE conversation_id = ?",
+            ("2000-01-01T00:00:00+00:00", 1),
+        )
+        self.storage._conn.execute(
+            "UPDATE conversations SET updated_at = ? WHERE id = ?",
+            ("2000-01-01T00:00:00+00:00", 1),
+        )
+        self.storage._conn.commit()
+        message_count = self._stored_message_count()
+
+        await self._send_raw(message_id=2)
+
+        self.assertEqual(self._stored_message_count(), message_count)
+        self.assertEqual(self.api.sent_messages[-1]["reply_to_message_id"], 2)
+        self.assertEqual(
+            self.api.sent_messages[-1]["text"],
+            "**bold** and `code`",
+        )
+        self.assertEqual(
+            self.api.sent_messages[-1]["entities"],
+            [{"type": "pre", "offset": 0, "length": 19}],
+        )
+
+    async def test_raw_command_reply_to_assistant_uses_that_assistant(self) -> None:
+        await self._send_plain(message_id=1, text="first")
+        first_assistant_telegram_message_id = int(self.api.sent_messages[-1]["message_id"])
+        await self._send_plain(message_id=2, text="second")
+
+        await self._send_raw(message_id=3, reply_to_message_id=first_assistant_telegram_message_id)
+
+        self.assertEqual(self.api.sent_messages[-1]["reply_to_message_id"], 3)
+        self.assertEqual(self.api.sent_messages[-1]["text"], "reply 1")
+        self.assertEqual(
+            self.api.sent_messages[-1]["entities"],
+            [{"type": "pre", "offset": 0, "length": 7}],
+        )
+
+    async def test_raw_command_preserves_whitespace_when_split(self) -> None:
+        raw_text = "alpha \n  beta  gamma"
+        self.provider.request_events[1] = [
+            StreamEvent(kind="text_delta", text=raw_text),
+            StreamEvent(kind="done"),
+        ]
+        await self._send_plain(message_id=1, text="first")
+
+        self.service.render_limit = 8
+        first_raw_index = len(self.api.sent_messages)
+        await self._send_raw(message_id=2)
+
+        raw_messages = self.api.sent_messages[first_raw_index:]
+        self.assertGreater(len(raw_messages), 1)
+        self.assertEqual("".join(str(message["text"]) for message in raw_messages), raw_text)
+        self.assertEqual(
+            [message["entities"] for message in raw_messages],
+            [
+                [{"type": "pre", "offset": 0, "length": 7}],
+                [{"type": "pre", "offset": 0, "length": 8}],
+                [{"type": "pre", "offset": 0, "length": 5}],
+            ],
+        )
+
+    async def test_raw_command_reply_is_not_attachable(self) -> None:
+        await self._send_plain(message_id=1, text="first")
+        await self._send_raw(message_id=2)
+        raw_reply_message_id = int(self.api.sent_messages[-1]["message_id"])
+
+        await self._send_plain(
+            message_id=3,
+            text="follow raw",
+            reply_to_message_id=raw_reply_message_id,
+            reply_to_bot=True,
+        )
+
+        self.assertEqual(self._conversation_ids(), [1, 2])
+        self.assertEqual([message.content for message in self.provider.requests[1].conversation], ["follow raw"])
+
+    async def test_raw_command_without_assistant_target_sends_usage(self) -> None:
+        await self._send_raw(message_id=1)
+
+        self.assertEqual(self.api.sent_messages[-1]["reply_to_message_id"], 1)
+        self.assertEqual(
+            self.api.sent_messages[-1]["text"],
+            "Usage: /r after an assistant reply, or reply to an assistant message with /r.",
+        )
+        self.assertEqual(self.api.sent_messages[-1]["entities"], [])
+
     async def test_choose_model_reply_to_seed_with_new_alias_forks_branch(self) -> None:
         await self._send_system_prompt(message_id=1, prompt="be concise")
         await self._send_choose_model(message_id=2, alias="alt", text="hello", reply_to_message_id=1)
@@ -2032,6 +2125,22 @@ class ChatServiceTests(unittest.IsolatedAsyncioTestCase):
             action=ChatAction(content="", intent="set_system_prompt", system_prompt=prompt),
         )
 
+    async def _send_raw(
+        self,
+        *,
+        message_id: int,
+        reply_to_message_id: int | None = None,
+    ) -> None:
+        await self.service.send_raw_content_reply(
+            api=self.api,
+            message=make_message(
+                message_id=message_id,
+                text="/r",
+                reply_to_message_id=reply_to_message_id,
+                reply_to_bot=reply_to_message_id is not None,
+            ),
+        )
+
     async def _send_action(self, *, incoming_message: IncomingMessage, action: ChatAction) -> None:
         await self.service.generate_reply(
             api=self.api,
@@ -2051,6 +2160,11 @@ class ChatServiceTests(unittest.IsolatedAsyncioTestCase):
         ).fetchone()
         assert row is not None
         return int(row["pending_count"])
+
+    def _stored_message_count(self) -> int:
+        row = self.storage._conn.execute("SELECT COUNT(*) AS message_count FROM messages").fetchone()
+        assert row is not None
+        return int(row["message_count"])
 
     def _conversation_tip(self, conversation_id: int) -> StoredMessage | None:
         return self.storage.conversations.get_conversation_tip_message(conversation_id)

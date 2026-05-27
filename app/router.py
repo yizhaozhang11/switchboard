@@ -76,6 +76,11 @@ class Router:
         if command_name == "whitelist":
             return CommandAction(name="whitelist")
 
+        if command_name == "r":
+            if len(command_tokens) > 1 or (has_newline and remainder.strip()):
+                return CommandAction(name="usage_error", content="Usage: /r")
+            return CommandAction(name="raw")
+
         if command_name == "c":
             if len(command_tokens) < 2:
                 return CommandAction(name="usage_error", content="Usage: /c <alias> <content>")

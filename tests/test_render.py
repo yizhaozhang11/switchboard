@@ -85,6 +85,42 @@ class RenderTests(unittest.TestCase):
             ],
         )
 
+    def test_pre_rich_text_preserves_raw_markdown(self) -> None:
+        rendered = RichText.pre("**bold** and `code`")
+        self.assertEqual(
+            rendered.to_telegram(),
+            (
+                "**bold** and `code`",
+                [{"type": "pre", "offset": 0, "length": 19}],
+            ),
+        )
+
+    def test_split_rich_text_preserves_pre_entity_ranges(self) -> None:
+        rich = RichText.pre("One two three four five")
+        parts = split_rich_text(rich, 10)
+        self.assertEqual(
+            [part.to_telegram() for part in parts],
+            [
+                ("One two", [{"type": "pre", "offset": 0, "length": 7}]),
+                ("three", [{"type": "pre", "offset": 0, "length": 5}]),
+                ("four five", [{"type": "pre", "offset": 0, "length": 9}]),
+            ],
+        )
+
+    def test_split_rich_text_can_preserve_boundary_whitespace(self) -> None:
+        raw = "alpha \n  beta  gamma"
+        parts = split_rich_text(RichText.pre(raw), 8, preserve_whitespace=True)
+
+        self.assertEqual("".join(part.text for part in parts), raw)
+        self.assertEqual(
+            [part.to_telegram() for part in parts],
+            [
+                ("alpha \n", [{"type": "pre", "offset": 0, "length": 7}]),
+                ("  beta  ", [{"type": "pre", "offset": 0, "length": 8}]),
+                ("gamma", [{"type": "pre", "offset": 0, "length": 5}]),
+            ],
+        )
+
 
 if __name__ == "__main__":
     unittest.main()

@@ -160,6 +160,7 @@ class FakeService:
         self.toggle_chat_calls: list[int] = []
         self.toggle_user_calls: list[int] = []
         self.whitelist_calls = 0
+        self.raw_calls: list[dict[str, object]] = []
         self.recovered_assistant_ids: list[int] = []
         self.recovery_calls: list[dict[str, object]] = []
         self.recovery_result = True
@@ -178,6 +179,9 @@ class FakeService:
 
     async def generate_reply(self, **kwargs) -> None:
         self.generate_calls.append(kwargs)
+
+    async def send_raw_content_reply(self, **kwargs) -> None:
+        self.raw_calls.append(kwargs)
 
     async def recover_interrupted_assistant_turn(self, *, api, assistant_message_id: int, **kwargs) -> bool:
         _ = api
@@ -1037,6 +1041,16 @@ class TelegramAppTests(unittest.IsolatedAsyncioTestCase):
         self.assertEqual(len(self.service.generate_calls), 2)
         self.assertEqual(self.service.generate_calls[0]["action"].intent, "new")
         self.assertEqual(self.service.generate_calls[1]["action"].intent, "set_system_prompt")
+
+    async def test_raw_command_is_handled_as_command(self) -> None:
+        self.storage.settings.set_reply_mode(100, "off")
+
+        await self.app._handle_update(make_update(text="/r"))
+
+        self.assertEqual(len(self.service.raw_calls), 1)
+        self.assertEqual(self.service.generate_calls, [])
+        self.assertIs(self.service.raw_calls[0]["api"], self.api)
+        self.assertEqual(self.service.raw_calls[0]["message"].text, "/r")
 
 
 if __name__ == "__main__":

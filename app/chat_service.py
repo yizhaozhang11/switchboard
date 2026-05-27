@@ -11,6 +11,7 @@ from app.config import VALID_REPLY_MODES
 from app.conversation_engine import ConversationEngine, DeferredAction, StoredUserInput, TurnPlan
 from app.providers.registry import ProviderRegistry, supported_tool_aliases_for_provider
 from app.render import ReplySession, render_reply_text
+from app.richtext import RichText
 from app.storage import Storage, utcnow
 from app.telegram_api import TelegramBotAPI
 from app.types import (
@@ -22,6 +23,7 @@ from app.types import (
     ImageRef,
     IncomingMessage,
     PendingMessage,
+    StoredMessage,
     build_content_parts,
 )
 
@@ -142,6 +144,73 @@ class ChatService:
                 ]
             )
         return None
+
+    async def send_raw_content_reply(
+        self,
+        *,
+        api: TelegramBotAPI,
+        message: IncomingMessage,
+        inbox_update_ids: tuple[int, ...] = (),
+    ) -> None:
+        target_message = self._resolve_raw_content_target(message)
+        if target_message is None:
+            await self._send_command_reply(
+                api=api,
+                chat_id=message.chat_id,
+                text="Usage: /r after an assistant reply, or reply to an assistant message with /r.",
+                reply_to_message_id=message.message_id,
+                inbox_update_ids=inbox_update_ids,
+            )
+            return
+
+        raw_text = target_message.content if target_message.content.strip() else "(empty response)"
+        await self._send_command_reply(
+            api=api,
+            chat_id=message.chat_id,
+            text=RichText.pre(raw_text),
+            reply_to_message_id=message.message_id,
+            inbox_update_ids=inbox_update_ids,
+            preserve_whitespace=True,
+        )
+
+    def _resolve_raw_content_target(self, message: IncomingMessage) -> StoredMessage | None:
+        if message.reply_to_message_id is not None:
+            target_message = self.storage.conversations.get_message_by_telegram(
+                chat_id=message.chat_id,
+                telegram_message_id=message.reply_to_message_id,
+            )
+        else:
+            target_message = self.storage.conversations.find_latest_state_message(
+                chat_id=message.chat_id,
+                user_id=message.user_id,
+            )
+
+        if target_message is None or target_message.message_type != "assistant":
+            return None
+        return target_message
+
+    async def _send_command_reply(
+        self,
+        *,
+        api: TelegramBotAPI,
+        chat_id: int,
+        text: str | RichText,
+        reply_to_message_id: int,
+        inbox_update_ids: tuple[int, ...],
+        preserve_whitespace: bool = False,
+    ) -> None:
+        if inbox_update_ids:
+            self.storage.inbox.mark_reply_started(update_ids=inbox_update_ids)
+        session = ReplySession(
+            api,
+            chat_id=chat_id,
+            reply_to_message_id=reply_to_message_id,
+            limit=self.render_limit,
+            edit_interval_seconds=self.render_edit_interval_seconds,
+        )
+        await session.update(text, force=True, preserve_whitespace=preserve_whitespace)
+        if inbox_update_ids:
+            self.storage.inbox.mark_reply_sent(update_ids=inbox_update_ids)
 
     def ping_text(self, message: IncomingMessage, settings: ChatSettings) -> str:
         return (

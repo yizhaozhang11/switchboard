@@ -519,6 +519,14 @@ class TelegramApp:
             )
             return
 
+        if action.name == "raw":
+            await self.service.send_raw_content_reply(
+                api=self.api,
+                message=message,
+                inbox_update_ids=inbox_update_ids,
+            )
+            return
+
         if action.name in {"togglechat", "toggleuser", "whitelist"}:
             if not self.service.has_configured_owners():
                 await self._send_reply_only_response(

@@ -39,6 +39,7 @@ Core commands:
 - `/ping`
 - `/models`
 - `/model <alias>`
+- `/r`
 - `/c <alias> <message>`
 - `/n [message]`
 - `/s <prompt>`
@@ -51,6 +52,7 @@ The basic model is:
 
 - a plain message uses the chat's default model
 - `/model` changes that default for the chat
+- `/r` shows the raw markdown from an assistant reply without attaching to the conversation
 - `/c` chooses a model for one turn or branch
 - `/n` starts a fresh conversation
 - `/s` creates or reframes a branch with a system-prompt override

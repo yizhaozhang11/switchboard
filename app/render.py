@@ -27,7 +27,7 @@ def split_text(text: str, limit: int) -> list[str]:
     return parts or [""]
 
 
-def split_rich_text(text: RichText, limit: int) -> list[RichText]:
+def split_rich_text(text: RichText, limit: int, *, preserve_whitespace: bool = False) -> list[RichText]:
     if not text:
         return [RichText("")]
 
@@ -40,6 +40,13 @@ def split_rich_text(text: RichText, limit: int) -> list[RichText]:
             split_at = chunk.rfind(" ")
         if split_at < limit // 2:
             split_at = limit
+
+        if preserve_whitespace:
+            if split_at < limit:
+                split_at += 1
+            parts.append(remaining[:split_at])
+            remaining = remaining[split_at:]
+            continue
 
         part_text = remaining.text[:split_at].rstrip()
         if part_text:
@@ -100,12 +107,20 @@ class ReplySession:
         *,
         force: bool = False,
         on_sent_message_id: Callable[[int, int], Awaitable[None]] | None = None,
+        preserve_whitespace: bool = False,
     ) -> None:
         now = time.monotonic()
         if not force and self.message_ids and now - self._last_render_at < self.edit_interval_seconds:
             return
         rendered = RichText.coerce(text)
-        parts = [self.prefix + part for part in split_rich_text(rendered, self.limit - len(self.prefix))]
+        parts = [
+            self.prefix + part
+            for part in split_rich_text(
+                rendered,
+                self.limit - len(self.prefix),
+                preserve_whitespace=preserve_whitespace,
+            )
+        ]
         await self._apply(parts, on_sent_message_id=on_sent_message_id)
         self._last_render_at = now
 

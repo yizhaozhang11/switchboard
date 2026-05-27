@@ -386,6 +386,27 @@ class ConversationStore:
         ).fetchone()
         return None if row is None else self._row_to_message(row)
 
+    def find_latest_state_message(self, *, chat_id: int, user_id: int) -> StoredMessage | None:
+        row = self._conn.execute(
+            """
+            SELECT m.*
+            FROM conversations c
+            JOIN messages m ON m.id = (
+                SELECT tip.id
+                FROM messages tip
+                WHERE tip.conversation_id = c.id
+                ORDER BY tip.id DESC
+                LIMIT 1
+            )
+            WHERE c.chat_id = ?
+              AND c.user_id = ?
+            ORDER BY c.updated_at DESC, m.id DESC
+            LIMIT 1
+            """,
+            (chat_id, user_id),
+        ).fetchone()
+        return None if row is None else self._row_to_message(row)
+
     def create_message(
         self,
         *,

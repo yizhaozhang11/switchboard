@@ -154,6 +154,26 @@ class RouterTests(unittest.TestCase):
         assert isinstance(action, CommandAction)
         self.assertEqual(action.name, "whitelist")
 
+    def test_parse_raw_command(self) -> None:
+        action = self.router.route(make_message(text="/r"), make_settings())
+        self.assertIsInstance(action, CommandAction)
+        assert isinstance(action, CommandAction)
+        self.assertEqual(action.name, "raw")
+
+    def test_raw_command_rejects_arguments(self) -> None:
+        action = self.router.route(make_message(text="/r extra"), make_settings())
+        self.assertIsInstance(action, CommandAction)
+        assert isinstance(action, CommandAction)
+        self.assertEqual(action.name, "usage_error")
+        self.assertEqual(action.content, "Usage: /r")
+
+    def test_raw_command_rejects_multiline_body(self) -> None:
+        action = self.router.route(make_message(text="/r\nextra"), make_settings())
+        self.assertIsInstance(action, CommandAction)
+        assert isinstance(action, CommandAction)
+        self.assertEqual(action.name, "usage_error")
+        self.assertEqual(action.content, "Usage: /r")
+
     def test_parse_n_command_multiline(self) -> None:
         action = self.router.route(make_message(text="/n\nfresh start"), make_settings())
         self.assertIsInstance(action, ChatAction)
