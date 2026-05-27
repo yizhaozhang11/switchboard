@@ -106,13 +106,17 @@ class RouterTests(unittest.TestCase):
         self.assertIsNone(action.argument)
 
     def test_parse_help_command_with_topic(self) -> None:
-        action = self.router.route(make_message(text="/help new"), make_settings())
+        action = self.router.route(make_message(text="/help n"), make_settings())
         self.assertIsInstance(action, CommandAction)
         assert isinstance(action, CommandAction)
         self.assertEqual(action.name, "help")
-        self.assertEqual(action.argument, "new")
+        self.assertEqual(action.argument, "n")
 
     def test_registered_command_menu_matches_router_commands(self) -> None:
+        registered_commands = [spec.command for spec in ALL_COMMANDS]
+        self.assertIn("n", registered_commands)
+        self.assertNotIn("new", registered_commands)
+
         examples = {
             "c": "/c o hello",
             "model": "/model o",
@@ -150,25 +154,25 @@ class RouterTests(unittest.TestCase):
         assert isinstance(action, CommandAction)
         self.assertEqual(action.name, "whitelist")
 
-    def test_parse_new_command_multiline(self) -> None:
-        action = self.router.route(make_message(text="/new\nfresh start"), make_settings())
+    def test_parse_n_command_multiline(self) -> None:
+        action = self.router.route(make_message(text="/n\nfresh start"), make_settings())
         self.assertIsInstance(action, ChatAction)
         assert isinstance(action, ChatAction)
         self.assertEqual(action.content, "fresh start")
         self.assertIsNone(action.model_alias)
         self.assertEqual(action.intent, "new")
 
-    def test_new_command_without_content_routes_empty_trigger(self) -> None:
-        action = self.router.route(make_message(text="/new"), make_settings())
+    def test_n_command_without_content_routes_empty_trigger(self) -> None:
+        action = self.router.route(make_message(text="/n"), make_settings())
         self.assertIsInstance(action, ChatAction)
         assert isinstance(action, ChatAction)
         self.assertEqual(action.content, "")
         self.assertEqual(action.intent, "new")
 
-    def test_new_command_allows_image_only_message(self) -> None:
+    def test_n_command_allows_image_only_message(self) -> None:
         action = self.router.route(
             make_message(
-                text="/new",
+                text="/n",
                 images=(ImageRef(file_id="photo-1", mime_type="image/jpeg"),),
             ),
             make_settings(),
@@ -197,11 +201,18 @@ class RouterTests(unittest.TestCase):
         assert isinstance(action, ChatAction)
         self.assertEqual(action.intent, "choose_model")
 
-    def test_new_replying_to_human_still_routes(self) -> None:
+    def test_n_replying_to_human_still_routes(self) -> None:
         action = self.router.route(
-            make_message(text="/new fresh", reply_to_message_id=9, reply_to_bot=False),
+            make_message(text="/n fresh", reply_to_message_id=9, reply_to_bot=False),
             make_settings(),
         )
+        self.assertIsInstance(action, ChatAction)
+        assert isinstance(action, ChatAction)
+        self.assertEqual(action.content, "fresh")
+        self.assertEqual(action.intent, "new")
+
+    def test_new_command_still_routes_as_compatibility_alias(self) -> None:
+        action = self.router.route(make_message(text="/new fresh"), make_settings())
         self.assertIsInstance(action, ChatAction)
         assert isinstance(action, ChatAction)
         self.assertEqual(action.content, "fresh")
@@ -290,15 +301,15 @@ class RouterTests(unittest.TestCase):
         self.assertEqual(action.content, "")
         self.assertEqual(len(action.images), 1)
 
-    def test_new_command_preserves_album_part_order(self) -> None:
+    def test_n_command_preserves_album_part_order(self) -> None:
         image_one = ImageRef(file_id="photo-1", mime_type="image/jpeg")
         image_two = ImageRef(file_id="photo-2", mime_type="image/jpeg")
         action = self.router.route(
             make_message(
-                text="/new caption one\n\ncaption two",
+                text="/n caption one\n\ncaption two",
                 images=(image_one, image_two),
                 parts=(
-                    ContentPart(kind="text", text="/new caption one"),
+                    ContentPart(kind="text", text="/n caption one"),
                     ContentPart(kind="image", image=image_one),
                     ContentPart(kind="text", text="caption two"),
                     ContentPart(kind="image", image=image_two),

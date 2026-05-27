@@ -169,7 +169,7 @@ class FakeService:
 
     def command_help_text(self, *, topic, settings):
         normalized = topic.strip().lstrip("/").lower()
-        if normalized not in {"new", "c", "s"}:
+        if normalized not in {"n", "c", "s"}:
             return None
         return f"Explain {normalized} for {settings.default_model_alias}"
 
@@ -1027,11 +1027,11 @@ class TelegramAppTests(unittest.IsolatedAsyncioTestCase):
         )
         self.assertEqual(self.service.generate_calls, [])
 
-    async def test_new_and_system_prompt_commands_bypass_off_mode_gating(self) -> None:
+    async def test_n_and_system_prompt_commands_bypass_off_mode_gating(self) -> None:
         self.service.allowed = True
         self.storage.settings.set_reply_mode(100, "off")
 
-        await self.app._handle_update(make_update(text="/new hello"))
+        await self.app._handle_update(make_update(text="/n hello"))
         await self.app._handle_update(make_update(text="/s be concise", message_id=11))
 
         self.assertEqual(len(self.service.generate_calls), 2)

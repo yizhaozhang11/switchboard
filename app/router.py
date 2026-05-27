@@ -91,7 +91,7 @@ class Router:
                 parts=self._rewrite_command_parts(command_name="c", content=content, parts=parts, images=images),
             )
 
-        if command_name == "new":
+        if command_name in {"n", "new"}:
             inline_parts = head.split(maxsplit=1)
             inline_content = inline_parts[1] if len(inline_parts) == 2 else ""
             content = self._combine_command_content(inline_content, has_newline, remainder)
@@ -99,7 +99,7 @@ class Router:
                 content=content,
                 intent="new",
                 images=images,
-                parts=self._rewrite_command_parts(command_name="new", content=content, parts=parts, images=images),
+                parts=self._rewrite_command_parts(command_name=command_name, content=content, parts=parts, images=images),
             )
 
         if command_name == "s":
@@ -168,7 +168,7 @@ class Router:
         head = first_line.strip()
         if command_name == "c":
             return self._extract_command_content(head.split(maxsplit=2), has_newline, remainder)
-        if command_name == "new":
+        if command_name in {"n", "new"}:
             inline_parts = head.split(maxsplit=1)
             inline_content = inline_parts[1] if len(inline_parts) == 2 else ""
             return self._combine_command_content(inline_content, has_newline, remainder)

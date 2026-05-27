@@ -23,14 +23,14 @@ class CommandSpec:
         return self.menu_description or self.description
 
 
-COMMAND_HELP_TOPICS = ("new", "c", "s")
+COMMAND_HELP_TOPICS = ("n", "c", "s")
 
 CORE_COMMANDS = (
     CommandSpec("help", "", "show this help", "Show help"),
     CommandSpec("ping", "", "show chat and user IDs, reply mode, and default model", "Show chat status"),
     CommandSpec("models", "", "list available model aliases", "List available model aliases"),
     CommandSpec("c", " <alias> <content>", "send one message with a specific model", "Send with a specific model"),
-    CommandSpec("new", " [content]", "start a fresh conversation", "Start a fresh conversation"),
+    CommandSpec("n", " [content]", "start a fresh conversation", "Start a fresh conversation"),
     CommandSpec("s", " <prompt>", "set a system prompt override for a conversation", "Set a system prompt override"),
 )
 

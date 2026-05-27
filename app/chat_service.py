@@ -112,10 +112,10 @@ class ChatService:
 
     def command_help_text(self, *, topic: str, settings: ChatSettings) -> str | None:
         normalized_topic = topic.strip().casefold().lstrip("/")
-        if normalized_topic == "new":
+        if normalized_topic in {"n", "new"}:
             return "\n".join(
                 [
-                    "/new [content]",
+                    "/n [content]",
                     f"- Starts a fresh conversation with the chat default model alias {settings.default_model_alias}.",
                     "- Without content, it sends an empty turn to trigger model output from the system prompt.",
                     "- If you reply to a seed state whose visible history is empty, it materializes that seeded branch instead of starting from scratch.",

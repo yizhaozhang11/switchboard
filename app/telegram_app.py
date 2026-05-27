@@ -6,7 +6,7 @@ import re
 from dataclasses import dataclass
 
 from app.chat_service import ChatService
-from app.commands import telegram_bot_commands
+from app.commands import COMMAND_HELP_TOPICS, telegram_bot_commands
 from app.config import Config
 from app.router import Router
 from app.storage import InboxUpdate, Storage
@@ -491,7 +491,10 @@ class TelegramApp:
                 if help_text is None:
                     await self._send_reply_only_response(
                         message=message,
-                        text=f"Unknown help topic: {action.argument}\nTry /help, /help new, /help c, or /help s.",
+                        text=(
+                            f"Unknown help topic: {action.argument}\n"
+                            f"Try /help, {self._help_topic_examples()}, or /help {COMMAND_HELP_TOPICS[-1]}."
+                        ),
                         inbox_update_ids=inbox_update_ids,
                     )
                     return
@@ -648,6 +651,9 @@ class TelegramApp:
             text=f"Unknown command handler: {action.name}",
             inbox_update_ids=inbox_update_ids,
         )
+
+    def _help_topic_examples(self) -> str:
+        return ", ".join(f"/help {topic}" for topic in COMMAND_HELP_TOPICS[:-1])
 
     def _parse_incoming_message(self, update: dict) -> IncomingMessage | None:
         message = update.get("message")

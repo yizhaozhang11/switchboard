@@ -35,12 +35,12 @@ For one-off opt-out, prefix a message with `//` and the bot ignores it.
 Core commands:
 
 - `/help`
-- `/help <new|c|s>`
+- `/help <n|c|s>`
 - `/ping`
 - `/models`
 - `/model <alias>`
 - `/c <alias> <message>`
-- `/new [message]`
+- `/n [message]`
 - `/s <prompt>`
 - `/mode auto|mention|off`
 - `/togglechat [chat_id]`
@@ -52,7 +52,7 @@ The basic model is:
 - a plain message uses the chat's default model
 - `/model` changes that default for the chat
 - `/c` chooses a model for one turn or branch
-- `/new` starts a fresh conversation
+- `/n` starts a fresh conversation
 - `/s` creates or reframes a branch with a system-prompt override
 
 ## How Conversations Work
@@ -72,7 +72,7 @@ Replies:
 
 Command behavior:
 
-- `/new` starts fresh unless it is used on a seed created by `/s`
+- `/n` starts fresh unless it is used on a seed created by `/s`
 - `/c` switches model for the selected branch or starts a new branch with that model
 - `/s` can create a reusable seed or reframe an existing branch with a different system prompt
 

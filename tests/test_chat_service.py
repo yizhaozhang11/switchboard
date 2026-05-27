@@ -392,11 +392,11 @@ class ChatServiceTests(unittest.IsolatedAsyncioTestCase):
         self.assertEqual(self.provider.requests[0].model.model_id, "default-model")
         self.assertEqual(self.provider.requests[0].requested_tools, ("search",))
 
-    def test_command_help_text_for_new_mentions_default_model_and_seed_materialization(self) -> None:
-        text = self.service.command_help_text(topic="new", settings=self.settings)
+    def test_command_help_text_for_n_mentions_default_model_and_seed_materialization(self) -> None:
+        text = self.service.command_help_text(topic="n", settings=self.settings)
         self.assertIsNotNone(text)
         assert text is not None
-        self.assertIn("/new [content]", text)
+        self.assertIn("/n [content]", text)
         self.assertIn("Without content", text)
         self.assertIn("chat default model alias o", text)
         self.assertIn("seed state whose visible history is empty", text)
