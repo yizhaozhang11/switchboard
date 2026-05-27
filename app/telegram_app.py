@@ -6,6 +6,7 @@ import re
 from dataclasses import dataclass
 
 from app.chat_service import ChatService
+from app.commands import telegram_bot_commands
 from app.config import Config
 from app.router import Router
 from app.storage import InboxUpdate, Storage
@@ -66,6 +67,9 @@ class TelegramApp:
         self.bot_username = str(me.get("username") or "")
         self.router = Router(bot_username=self.bot_username)
         logging.info("Bot connected as @%s (%s)", self.bot_username, self.bot_id)
+        commands = telegram_bot_commands()
+        await self.api.set_my_commands(commands)
+        logging.info("Registered %d Telegram bot commands", len(commands))
 
         await self._recover_claimed_updates()
 

@@ -2,6 +2,7 @@ from __future__ import annotations
 
 import unittest
 
+from app.commands import ALL_COMMANDS
 from app.router import Router
 from app.types import ChatAction, ChatSettings, CommandAction, IgnoreAction, ContentPart, ImageRef, IncomingMessage
 
@@ -110,6 +111,24 @@ class RouterTests(unittest.TestCase):
         assert isinstance(action, CommandAction)
         self.assertEqual(action.name, "help")
         self.assertEqual(action.argument, "new")
+
+    def test_registered_command_menu_matches_router_commands(self) -> None:
+        examples = {
+            "c": "/c o hello",
+            "model": "/model o",
+            "mode": "/mode auto",
+            "s": "/s prompt",
+        }
+        for spec in ALL_COMMANDS:
+            with self.subTest(command=spec.command):
+                action = self.router.route(
+                    make_message(text=examples.get(spec.command, f"/{spec.command}")),
+                    make_settings(),
+                )
+                if isinstance(action, CommandAction):
+                    self.assertNotEqual(action.content, f"Unknown command: /{spec.command}")
+                else:
+                    self.assertIsInstance(action, ChatAction)
 
     def test_parse_togglechat_command(self) -> None:
         action = self.router.route(make_message(text="/togglechat"), make_settings())

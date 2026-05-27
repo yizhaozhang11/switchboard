@@ -25,8 +25,9 @@ if "httpx" not in sys.modules:
     httpx_stub.AsyncClient = AsyncClient
     sys.modules["httpx"] = httpx_stub
 
-from app.router import Router
+from app.commands import telegram_bot_commands
 from app.richtext import RichText
+from app.router import Router
 from app.storage import Storage
 from app.telegram_app import InboxClaim, TelegramApp
 
@@ -93,6 +94,7 @@ class FakeTelegramAPI:
         self.sent_messages: list[dict[str, object]] = []
         self.edits: list[dict[str, object]] = []
         self.file_bytes: dict[str, bytes] = {}
+        self.set_my_commands_calls: list[list[dict[str, str]]] = []
         self.send_failures_remaining = 0
         self.before_send = None
 
@@ -125,6 +127,9 @@ class FakeTelegramAPI:
 
     async def delete_message(self, chat_id: int, message_id: int) -> None:
         return None
+
+    async def set_my_commands(self, commands: list[dict[str, str]]) -> None:
+        self.set_my_commands_calls.append(list(commands))
 
     async def download_file_bytes(self, file_id: str) -> bytes:
         return self.file_bytes[file_id]
@@ -342,6 +347,33 @@ class TelegramAppTests(unittest.IsolatedAsyncioTestCase):
         self.assertEqual(api.get_updates_calls, [None, 2])
 
         release_update.set()
+        run_task.cancel()
+        with self.assertRaises(asyncio.CancelledError):
+            await run_task
+
+    async def test_run_registers_current_telegram_command_menu(self) -> None:
+        api = FakePollingTelegramAPI()
+        app = TelegramApp(
+            config=DummyConfig(),
+            storage=self.storage,
+            service=self.service,
+            api=api,
+        )
+        app.scheduler_poll_seconds = 0.01
+        first_poll_started = asyncio.Event()
+
+        async def get_updates_handler(*, offset: int | None, timeout: int) -> list[dict]:
+            _ = (offset, timeout)
+            first_poll_started.set()
+            await asyncio.Future()
+
+        api.get_updates_handler = get_updates_handler
+
+        run_task = asyncio.create_task(app.run())
+        await asyncio.wait_for(first_poll_started.wait(), timeout=1.0)
+
+        self.assertEqual(api.set_my_commands_calls, [telegram_bot_commands()])
+
         run_task.cancel()
         with self.assertRaises(asyncio.CancelledError):
             await run_task

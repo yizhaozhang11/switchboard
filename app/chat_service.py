@@ -6,6 +6,7 @@ import logging
 from collections import defaultdict
 from dataclasses import dataclass, replace
 
+from app.commands import CHAT_SETTING_COMMANDS, COMMAND_HELP_TOPICS, CORE_COMMANDS, OWNER_COMMANDS
 from app.config import VALID_REPLY_MODES
 from app.conversation_engine import ConversationEngine, DeferredAction, StoredUserInput, TurnPlan
 from app.providers.registry import ProviderRegistry, supported_tool_aliases_for_provider
@@ -88,29 +89,26 @@ class ChatService:
         return "\n".join(lines)
 
     def help_text(self, *, settings: ChatSettings) -> str:
-        return "\n".join(
+        lines = ["Commands:"]
+        for spec in CORE_COMMANDS:
+            lines.append(spec.help_line)
+            if spec.command == "help":
+                topics = "|".join(COMMAND_HELP_TOPICS)
+                lines.append(f"- /help <{topics}> - explain how that command uses conversation state")
+
+        lines.extend(["", "Chat settings:"])
+        lines.extend(spec.help_line for spec in CHAT_SETTING_COMMANDS)
+
+        lines.extend(["", "Owner commands:"])
+        lines.extend(spec.help_line for spec in OWNER_COMMANDS)
+
+        lines.extend(
             [
-                "Commands:",
-                "- /help - show this help",
-                "- /help <new|c|s> - explain how that command uses conversation state",
-                "- /ping - show chat and user IDs, reply mode, and default model",
-                "- /models - list available model aliases",
-                "- /c <alias> <content> - send one message with a specific model",
-                "- /new [content] - start a fresh conversation",
-                "- /s <prompt> - set a system prompt override for a conversation",
-                "",
-                "Chat settings:",
-                "- /model <alias> - set the default model for this chat",
-                "- /mode auto|mention|off - set how plain messages are handled",
-                "",
-                "Owner commands:",
-                "- /togglechat [chat_id] - add or remove a chat from the whitelist",
-                "- /toggleuser [user_id] - add or remove a user from the whitelist",
-                "- /whitelist - show the current whitelist",
                 "",
                 f"Current defaults: model={settings.default_model_alias}, reply_mode={settings.reply_mode}",
             ]
         )
+        return "\n".join(lines)
 
     def command_help_text(self, *, topic: str, settings: ChatSettings) -> str | None:
         normalized_topic = topic.strip().casefold().lstrip("/")

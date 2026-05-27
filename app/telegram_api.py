@@ -105,6 +105,9 @@ class TelegramBotAPI:
     async def get_me(self) -> dict:
         return await self.request("getMe")
 
+    async def set_my_commands(self, commands: list[dict[str, str]]) -> None:
+        await self.request("setMyCommands", {"commands": commands})
+
     async def get_updates(self, *, offset: int | None, timeout: int) -> list[dict]:
         payload: dict[str, object] = {"timeout": timeout, "allowed_updates": ["message"]}
         if offset is not None:

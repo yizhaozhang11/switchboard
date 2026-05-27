@@ -190,6 +190,23 @@ class TelegramBotAPITests(unittest.IsolatedAsyncioTestCase):
 
         await api.delete_message(100, 200)
 
+    async def test_set_my_commands_sends_current_payload_shape(self) -> None:
+        api = TelegramBotAPI("test-token")
+        api._client = FakeClient([FakeResponse(json_data={"ok": True, "result": True})])
+        commands = [{"command": "help", "description": "Show help"}]
+
+        await api.set_my_commands(commands)
+
+        self.assertEqual(
+            api._client.calls,
+            [
+                (
+                    "https://api.telegram.org/bottest-token/setMyCommands",
+                    {"commands": commands},
+                )
+            ],
+        )
+
     async def test_request_sanitizes_http_transport_errors(self) -> None:
         api = TelegramBotAPI("test-token")
         api._client = FakeClient([httpx.HTTPError("https://api.telegram.org/bottest-token/getMe failed")])
