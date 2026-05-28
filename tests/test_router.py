@@ -92,6 +92,20 @@ class RouterTests(unittest.TestCase):
         self.assertEqual(action.name, "mode")
         self.assertEqual(action.argument, "mention")
 
+    def test_parse_timeout_command(self) -> None:
+        action = self.router.route(make_message(text="/timeout 5 minutes"), make_settings())
+        self.assertIsInstance(action, CommandAction)
+        assert isinstance(action, CommandAction)
+        self.assertEqual(action.name, "timeout")
+        self.assertEqual(action.argument, "5 minutes")
+
+    def test_timeout_command_requires_argument(self) -> None:
+        action = self.router.route(make_message(text="/timeout"), make_settings())
+        self.assertIsInstance(action, CommandAction)
+        assert isinstance(action, CommandAction)
+        self.assertEqual(action.name, "usage_error")
+        self.assertEqual(action.content, "Usage: /timeout <seconds|5m|1h>")
+
     def test_parse_ping_command(self) -> None:
         action = self.router.route(make_message(text="/ping"), make_settings())
         self.assertIsInstance(action, CommandAction)
@@ -121,6 +135,7 @@ class RouterTests(unittest.TestCase):
             "c": "/c o hello",
             "model": "/model o",
             "mode": "/mode auto",
+            "timeout": "/timeout 5m",
             "s": "/s prompt",
         }
         for spec in ALL_COMMANDS:

@@ -38,6 +38,7 @@ CORE_COMMANDS = (
 CHAT_SETTING_COMMANDS = (
     CommandSpec("model", " <alias>", "set the default model for this chat", "Set the default model"),
     CommandSpec("mode", " auto|mention|off", "set how plain messages are handled", "Set reply mode"),
+    CommandSpec("timeout", " <duration>", "set the plain-message conversation timeout", "Set conversation timeout"),
 )
 
 OWNER_COMMANDS = (

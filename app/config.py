@@ -19,6 +19,7 @@ DEFAULT_SYSTEM_PROMPT = (
 )
 
 VALID_REPLY_MODES = {"auto", "mention", "off"}
+MAX_CONVERSATION_TIMEOUT_SECONDS = 3650 * 24 * 60 * 60
 
 
 def load_dotenv(dotenv_path: Path) -> None:
@@ -135,6 +136,11 @@ class Config:
         conversation_timeout_seconds = int(os.getenv("BOT_CONVERSATION_TIMEOUT_SECONDS", "300"))
         if conversation_timeout_seconds <= 0:
             raise RuntimeError("BOT_CONVERSATION_TIMEOUT_SECONDS must be greater than 0")
+        if conversation_timeout_seconds > MAX_CONVERSATION_TIMEOUT_SECONDS:
+            raise RuntimeError(
+                "BOT_CONVERSATION_TIMEOUT_SECONDS must be at most "
+                f"{MAX_CONVERSATION_TIMEOUT_SECONDS}"
+            )
         safety_identifier_salt = os.getenv("SAFETY_IDENTIFIER_SALT", "").strip() or None
         if safety_identifier_salt is not None and len(safety_identifier_salt) < 16:
             raise RuntimeError("SAFETY_IDENTIFIER_SALT must be at least 16 characters when set")

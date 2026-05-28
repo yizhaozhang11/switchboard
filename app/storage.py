@@ -9,6 +9,7 @@ from datetime import datetime, timezone
 from pathlib import Path
 from typing import Iterator
 
+from app.config import MAX_CONVERSATION_TIMEOUT_SECONDS
 from app.types import (
     AllowlistEntry,
     ChatSettings,
@@ -34,6 +35,7 @@ CREATE TABLE IF NOT EXISTS chat_settings (
     reply_mode TEXT NOT NULL,
     default_model_alias TEXT NOT NULL,
     skip_prefix TEXT NOT NULL,
+    conversation_timeout_seconds INTEGER NOT NULL,
     created_at TEXT NOT NULL,
     updated_at TEXT NOT NULL
 );
@@ -185,15 +187,21 @@ class SettingsStore:
         default_model_alias: str,
         default_reply_mode: str,
         default_skip_prefix: str,
+        default_conversation_timeout_seconds: int,
     ) -> None:
         self._conn = conn
         self.default_model_alias = default_model_alias
         self.default_reply_mode = default_reply_mode
         self.default_skip_prefix = default_skip_prefix
+        self.default_conversation_timeout_seconds = default_conversation_timeout_seconds
 
     def get_chat_settings(self, chat_id: int, *, commit: bool = True) -> ChatSettings:
         row = self._conn.execute(
-            "SELECT chat_id, enabled, reply_mode, default_model_alias, skip_prefix FROM chat_settings WHERE chat_id = ?",
+            """
+            SELECT chat_id, enabled, reply_mode, default_model_alias, skip_prefix, conversation_timeout_seconds
+            FROM chat_settings
+            WHERE chat_id = ?
+            """,
             (chat_id,),
         ).fetchone()
         if row is None:
@@ -201,10 +209,20 @@ class SettingsStore:
             self._conn.execute(
                 """
                 INSERT INTO chat_settings (
-                    chat_id, enabled, reply_mode, default_model_alias, skip_prefix, created_at, updated_at
-                ) VALUES (?, ?, ?, ?, ?, ?, ?)
+                    chat_id, enabled, reply_mode, default_model_alias, skip_prefix,
+                    conversation_timeout_seconds, created_at, updated_at
+                ) VALUES (?, ?, ?, ?, ?, ?, ?, ?)
                 """,
-                (chat_id, 1, self.default_reply_mode, self.default_model_alias, self.default_skip_prefix, now, now),
+                (
+                    chat_id,
+                    1,
+                    self.default_reply_mode,
+                    self.default_model_alias,
+                    self.default_skip_prefix,
+                    self.default_conversation_timeout_seconds,
+                    now,
+                    now,
+                ),
             )
             if commit:
                 self._conn.commit()
@@ -214,6 +232,7 @@ class SettingsStore:
                 reply_mode=self.default_reply_mode,
                 default_model_alias=self.default_model_alias,
                 skip_prefix=self.default_skip_prefix,
+                conversation_timeout_seconds=self.default_conversation_timeout_seconds,
             )
         return ChatSettings(
             chat_id=row["chat_id"],
@@ -221,6 +240,7 @@ class SettingsStore:
             reply_mode=row["reply_mode"],
             default_model_alias=row["default_model_alias"],
             skip_prefix=row["skip_prefix"],
+            conversation_timeout_seconds=row["conversation_timeout_seconds"],
         )
 
     def set_default_model_alias(self, chat_id: int, alias: str, *, commit: bool = True) -> None:
@@ -237,6 +257,25 @@ class SettingsStore:
         self._conn.execute(
             "UPDATE chat_settings SET reply_mode = ?, updated_at = ? WHERE chat_id = ?",
             (reply_mode, utcnow(), chat_id),
+        )
+        if commit:
+            self._conn.commit()
+
+    def set_conversation_timeout_seconds(
+        self,
+        chat_id: int,
+        timeout_seconds: int,
+        *,
+        commit: bool = True,
+    ) -> None:
+        if timeout_seconds <= 0:
+            raise ValueError("Conversation timeout must be greater than 0 seconds")
+        if timeout_seconds > MAX_CONVERSATION_TIMEOUT_SECONDS:
+            raise ValueError(f"Conversation timeout must be at most {MAX_CONVERSATION_TIMEOUT_SECONDS} seconds")
+        self.get_chat_settings(chat_id, commit=commit)
+        self._conn.execute(
+            "UPDATE chat_settings SET conversation_timeout_seconds = ?, updated_at = ? WHERE chat_id = ?",
+            (timeout_seconds, utcnow(), chat_id),
         )
         if commit:
             self._conn.commit()
@@ -1448,12 +1487,14 @@ class Storage:
         default_model_alias: str,
         default_reply_mode: str,
         default_skip_prefix: str,
+        default_conversation_timeout_seconds: int = 300,
     ) -> None:
         self.db_path = Path(db_path)
         self.data_dir = self.db_path.parent
         self.default_model_alias = default_model_alias
         self.default_reply_mode = default_reply_mode
         self.default_skip_prefix = default_skip_prefix
+        self.default_conversation_timeout_seconds = default_conversation_timeout_seconds
 
         self._validate_schema_compatibility()
 
@@ -1470,6 +1511,7 @@ class Storage:
             default_model_alias=default_model_alias,
             default_reply_mode=default_reply_mode,
             default_skip_prefix=default_skip_prefix,
+            default_conversation_timeout_seconds=default_conversation_timeout_seconds,
         )
         self.conversations = ConversationStore(self._conn)
         self.inbox = InboxStore(self._conn)
@@ -1498,6 +1540,11 @@ class Storage:
         self._ensure_column("inbox_updates", "assistant_render_reply_text", "TEXT")
         self._ensure_column("inbox_updates", "assistant_render_reasoning_json", "TEXT")
         self._ensure_column("inbox_updates", "assistant_render_markdown", "INTEGER")
+        self._ensure_column(
+            "chat_settings",
+            "conversation_timeout_seconds",
+            f"INTEGER NOT NULL DEFAULT {self.default_conversation_timeout_seconds}",
+        )
 
     def _ensure_column(self, table_name: str, column_name: str, definition: str) -> None:
         rows = self._conn.execute(f"PRAGMA table_info({table_name})").fetchall()

@@ -3,11 +3,12 @@ from __future__ import annotations
 import asyncio
 import hashlib
 import logging
+import re
 from collections import defaultdict
 from dataclasses import dataclass, replace
 
 from app.commands import CHAT_SETTING_COMMANDS, COMMAND_HELP_TOPICS, CORE_COMMANDS, OWNER_COMMANDS
-from app.config import VALID_REPLY_MODES
+from app.config import MAX_CONVERSATION_TIMEOUT_SECONDS, VALID_REPLY_MODES
 from app.conversation_engine import ConversationEngine, DeferredAction, StoredUserInput, TurnPlan
 from app.providers.registry import ProviderRegistry, supported_tool_aliases_for_provider
 from app.render import ReplySession, render_reply_text
@@ -107,7 +108,12 @@ class ChatService:
         lines.extend(
             [
                 "",
-                f"Current defaults: model={settings.default_model_alias}, reply_mode={settings.reply_mode}",
+                (
+                    "Current defaults: "
+                    f"model={settings.default_model_alias}, "
+                    f"reply_mode={settings.reply_mode}, "
+                    f"timeout={self._format_duration(settings.conversation_timeout_seconds)}"
+                ),
             ]
         )
         return "\n".join(lines)
@@ -217,7 +223,8 @@ class ChatService:
             f"chat_id={message.chat_id}\n"
             f"user_id={message.user_id}\n"
             f"reply_mode={settings.reply_mode}\n"
-            f"default_model={settings.default_model_alias}"
+            f"default_model={settings.default_model_alias}\n"
+            f"conversation_timeout={settings.conversation_timeout_seconds}s"
         )
 
     def can_manage_chat(self, user_id: int) -> bool:
@@ -241,6 +248,68 @@ class ChatService:
             raise ValueError("Reply mode must be one of auto, mention, off")
         self.storage.settings.set_reply_mode(chat_id, reply_mode, commit=commit)
         return f"Reply mode set to {reply_mode}"
+
+    def set_conversation_timeout(self, *, chat_id: int, duration: str, commit: bool = True) -> str:
+        timeout_seconds = self._parse_duration_seconds(duration)
+        self.storage.settings.set_conversation_timeout_seconds(chat_id, timeout_seconds, commit=commit)
+        formatted = self._format_duration(timeout_seconds)
+        seconds_label = f"{timeout_seconds} second{'s' if timeout_seconds != 1 else ''}"
+        if formatted == seconds_label:
+            return f"Conversation timeout set to {formatted}"
+        return f"Conversation timeout set to {formatted} ({seconds_label})"
+
+    def _parse_duration_seconds(self, raw_duration: str) -> int:
+        normalized = raw_duration.strip().casefold()
+        match = re.fullmatch(r"(\d+)\s*([a-z]+)?", normalized)
+        if match is None:
+            raise ValueError("Timeout must be a positive duration like 300, 5m, or 1h")
+
+        amount = int(match.group(1))
+        unit = match.group(2) or "s"
+        multipliers = {
+            "s": 1,
+            "sec": 1,
+            "secs": 1,
+            "second": 1,
+            "seconds": 1,
+            "m": 60,
+            "min": 60,
+            "mins": 60,
+            "minute": 60,
+            "minutes": 60,
+            "h": 3600,
+            "hr": 3600,
+            "hrs": 3600,
+            "hour": 3600,
+            "hours": 3600,
+            "d": 86400,
+            "day": 86400,
+            "days": 86400,
+        }
+        multiplier = multipliers.get(unit)
+        if multiplier is None:
+            raise ValueError("Timeout must be a positive duration like 300, 5m, or 1h")
+
+        timeout_seconds = amount * multiplier
+        if timeout_seconds <= 0:
+            raise ValueError("Timeout must be greater than 0 seconds")
+        if timeout_seconds > MAX_CONVERSATION_TIMEOUT_SECONDS:
+            max_duration = self._format_duration(MAX_CONVERSATION_TIMEOUT_SECONDS)
+            raise ValueError(f"Timeout must be at most {max_duration}")
+        return timeout_seconds
+
+    def _format_duration(self, seconds: int) -> str:
+        units = (
+            (86400, "day"),
+            (3600, "hour"),
+            (60, "minute"),
+        )
+        for unit_seconds, unit_name in units:
+            if seconds >= unit_seconds and seconds % unit_seconds == 0:
+                amount = seconds // unit_seconds
+                suffix = "" if amount == 1 else "s"
+                return f"{amount} {unit_name}{suffix}"
+        return f"{seconds} second{'s' if seconds != 1 else ''}"
 
     def is_reply_allowed(self, *, chat_id: int, user_id: int) -> bool:
         return self.storage.settings.is_reply_allowed(chat_id=chat_id, user_id=user_id)
@@ -302,6 +371,7 @@ class ChatService:
                     result = self.engine.begin_action(
                         incoming_message=incoming_message,
                         default_model_alias=settings.default_model_alias,
+                        conversation_timeout_seconds=settings.conversation_timeout_seconds,
                         action=action,
                         user_input=raw_user_input,
                     )

@@ -7,6 +7,7 @@ import sys
 import tempfile
 import types
 import unittest
+from datetime import datetime, timedelta, timezone
 from pathlib import Path
 
 if "httpx" not in sys.modules:
@@ -27,6 +28,7 @@ if "httpx" not in sys.modules:
     sys.modules["httpx"] = httpx_stub
 
 from app.chat_service import ChatService
+from app.config import MAX_CONVERSATION_TIMEOUT_SECONDS
 from app.providers.registry import ProviderRegistry
 from app.richtext import RichText
 from app.storage import Storage
@@ -65,13 +67,14 @@ def make_message(
     )
 
 
-def make_settings(*, default_model_alias: str = "o") -> ChatSettings:
+def make_settings(*, default_model_alias: str = "o", conversation_timeout_seconds: int = 300) -> ChatSettings:
     return ChatSettings(
         chat_id=100,
         enabled=True,
         reply_mode="auto",
         default_model_alias=default_model_alias,
         skip_prefix="//",
+        conversation_timeout_seconds=conversation_timeout_seconds,
     )
 
 
@@ -258,6 +261,27 @@ class ChatServiceTests(unittest.IsolatedAsyncioTestCase):
         self.assertEqual(self._conversation_ids(), [1, 2])
         self.assertEqual([message.content for message in self.provider.requests[1].conversation], ["second"])
 
+    async def test_plain_message_uses_chat_timeout_setting(self) -> None:
+        await self._send_plain(message_id=1, text="first")
+        recent_but_expired_for_chat = (
+            datetime.now(timezone.utc) - timedelta(seconds=10)
+        ).replace(microsecond=0).isoformat()
+        self.storage._conn.execute(
+            "UPDATE conversations SET updated_at = ? WHERE id = ?",
+            (recent_but_expired_for_chat, 1),
+        )
+        self.storage._conn.commit()
+
+        await self.service.generate_reply(
+            api=self.api,
+            incoming_message=make_message(message_id=2, text="second"),
+            settings=make_settings(conversation_timeout_seconds=1),
+            action=ChatAction(content="second", intent="plain"),
+        )
+
+        self.assertEqual(self._conversation_ids(), [1, 2])
+        self.assertEqual([message.content for message in self.provider.requests[1].conversation], ["second"])
+
     async def test_plain_message_after_old_message_timestamps_uses_recent_conversation_activity(self) -> None:
         await self._send_plain(message_id=1, text="first")
         self.storage._conn.execute(
@@ -410,6 +434,23 @@ class ChatServiceTests(unittest.IsolatedAsyncioTestCase):
 
     def test_command_help_text_for_unknown_topic_returns_none(self) -> None:
         self.assertIsNone(self.service.command_help_text(topic="mode", settings=self.settings))
+
+    def test_set_conversation_timeout_parses_compact_duration(self) -> None:
+        reply_text = self.service.set_conversation_timeout(chat_id=100, duration="10m")
+
+        settings = self.storage.settings.get_chat_settings(100)
+        self.assertEqual(settings.conversation_timeout_seconds, 600)
+        self.assertEqual(reply_text, "Conversation timeout set to 10 minutes (600 seconds)")
+
+    def test_set_conversation_timeout_rejects_invalid_duration(self) -> None:
+        with self.assertRaisesRegex(ValueError, "Timeout must be a positive duration"):
+            self.service.set_conversation_timeout(chat_id=100, duration="soon")
+
+    def test_set_conversation_timeout_rejects_out_of_range_duration(self) -> None:
+        for duration in ("3651d", str(MAX_CONVERSATION_TIMEOUT_SECONDS + 1)):
+            with self.subTest(duration=duration):
+                with self.assertRaisesRegex(ValueError, "Timeout must be at most"):
+                    self.service.set_conversation_timeout(chat_id=100, duration=duration)
 
     async def test_raw_command_without_reply_uses_latest_assistant_without_timeout(self) -> None:
         self.provider.request_events[1] = [

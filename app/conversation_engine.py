@@ -50,12 +50,14 @@ class ConversationEngine:
         *,
         incoming_message: IncomingMessage,
         default_model_alias: str,
+        conversation_timeout_seconds: int | None = None,
         action: ChatAction,
         user_input: StoredUserInput | None,
     ) -> TurnPlan | DeferredAction | None:
         resolved_state, deferred_action = self._resolve_action_state(
             incoming_message=incoming_message,
             action=action,
+            conversation_timeout_seconds=conversation_timeout_seconds,
         )
         if deferred_action is not None:
             return deferred_action
@@ -104,11 +106,13 @@ class ConversationEngine:
         self,
         *,
         incoming_message: IncomingMessage,
+        conversation_timeout_seconds: int | None = None,
         action: ChatAction,
     ) -> DeferredAction | None:
         _, deferred_action = self._resolve_action_state(
             incoming_message=incoming_message,
             action=action,
+            conversation_timeout_seconds=conversation_timeout_seconds,
         )
         return deferred_action
 
@@ -168,6 +172,7 @@ class ConversationEngine:
         *,
         incoming_message: IncomingMessage,
         intent: str,
+        conversation_timeout_seconds: int | None = None,
     ) -> ResolvedState | None:
         attached_message: StoredMessage | None = None
         if incoming_message.reply_to_message_id is not None:
@@ -176,8 +181,9 @@ class ConversationEngine:
                 telegram_message_id=incoming_message.reply_to_message_id,
             )
         elif intent == "plain":
+            timeout_seconds = conversation_timeout_seconds or self.conversation_timeout_seconds
             cutoff = (
-                datetime.now(timezone.utc) - timedelta(seconds=self.conversation_timeout_seconds)
+                datetime.now(timezone.utc) - timedelta(seconds=timeout_seconds)
             ).replace(microsecond=0).isoformat()
             attached_message = self.storage.conversations.find_recent_state_message(
                 chat_id=incoming_message.chat_id,
@@ -209,10 +215,12 @@ class ConversationEngine:
         *,
         incoming_message: IncomingMessage,
         action: ChatAction,
+        conversation_timeout_seconds: int | None = None,
     ) -> tuple[ResolvedState | None, DeferredAction | None]:
         resolved_state = self._resolve_state(
             incoming_message=incoming_message,
             intent=action.intent,
+            conversation_timeout_seconds=conversation_timeout_seconds,
         )
         deferred_action = self._defer_streaming_assistant_branch(
             incoming_message=incoming_message,

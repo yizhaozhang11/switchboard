@@ -39,6 +39,7 @@ Core commands:
 - `/ping`
 - `/models`
 - `/model <alias>`
+- `/timeout <duration>`
 - `/r`
 - `/c <alias> <message>`
 - `/n [message]`
@@ -52,6 +53,7 @@ The basic model is:
 
 - a plain message uses the chat's default model
 - `/model` changes that default for the chat
+- `/timeout` changes how long plain messages continue the latest conversation; examples: `300`, `5m`, `1h`
 - `/r` shows the raw markdown from an assistant reply without attaching to the conversation
 - `/c` chooses a model for one turn or branch
 - `/n` starts a fresh conversation

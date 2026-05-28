@@ -101,6 +101,7 @@ async def async_main() -> None:
             default_model_alias=config.default_model_alias,
             default_reply_mode=config.default_reply_mode,
             default_skip_prefix=config.skip_prefix,
+            default_conversation_timeout_seconds=config.conversation_timeout_seconds,
         )
         registry = build_registry(config)
         validate_persisted_model_aliases(

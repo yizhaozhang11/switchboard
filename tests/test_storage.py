@@ -53,6 +53,17 @@ class StorageTests(unittest.TestCase):
         self.assertEqual(settings.chat_id, 123)
         self.assertEqual(settings.default_model_alias, "o")
         self.assertEqual(settings.reply_mode, "auto")
+        self.assertEqual(settings.conversation_timeout_seconds, 300)
+
+    def test_conversation_timeout_setting_is_persisted(self) -> None:
+        self.storage.settings.set_conversation_timeout_seconds(123, 600)
+
+        settings = self.storage.settings.get_chat_settings(123)
+        self.assertEqual(settings.conversation_timeout_seconds, 600)
+
+    def test_conversation_timeout_setting_rejects_unsafe_values(self) -> None:
+        with self.assertRaisesRegex(ValueError, "Conversation timeout must be at most"):
+            self.storage.settings.set_conversation_timeout_seconds(123, 10**20)
 
     def test_find_recent_state_message_by_chat_and_user(self) -> None:
         older_conversation = self.storage.conversations.create_conversation(chat_id=1, user_id=10, model_alias="o")
@@ -540,6 +551,46 @@ class StorageTests(unittest.TestCase):
         self.assertEqual(settings.default_model_alias, "o")
         version = int(self.storage._conn.execute("PRAGMA user_version").fetchone()[0])
         self.assertEqual(version, 1)
+
+    def test_chat_settings_timeout_column_is_added_to_existing_schema(self) -> None:
+        self.storage.close()
+        self.db_path.unlink()
+        conn = sqlite3.connect(str(self.db_path))
+        conn.execute(
+            """
+            CREATE TABLE chat_settings (
+                chat_id INTEGER PRIMARY KEY,
+                enabled INTEGER NOT NULL,
+                reply_mode TEXT NOT NULL,
+                default_model_alias TEXT NOT NULL,
+                skip_prefix TEXT NOT NULL,
+                created_at TEXT NOT NULL,
+                updated_at TEXT NOT NULL
+            )
+            """
+        )
+        conn.execute(
+            """
+            INSERT INTO chat_settings (
+                chat_id, enabled, reply_mode, default_model_alias, skip_prefix, created_at, updated_at
+            ) VALUES (?, ?, ?, ?, ?, ?, ?)
+            """,
+            (123, 1, "auto", "o", "//", "2026-01-01T00:00:00+00:00", "2026-01-01T00:00:00+00:00"),
+        )
+        conn.execute("PRAGMA user_version = 1")
+        conn.commit()
+        conn.close()
+
+        self.storage = Storage(
+            self.db_path,
+            default_model_alias="o",
+            default_reply_mode="auto",
+            default_skip_prefix="//",
+            default_conversation_timeout_seconds=42,
+        )
+
+        settings = self.storage.settings.get_chat_settings(123)
+        self.assertEqual(settings.conversation_timeout_seconds, 42)
 
     def test_incompatible_schema_version_raises_and_preserves_database(self) -> None:
         self.storage.close()

@@ -159,6 +159,7 @@ class FakeService:
         self.generate_calls: list[dict[str, object]] = []
         self.toggle_chat_calls: list[int] = []
         self.toggle_user_calls: list[int] = []
+        self.timeout_calls: list[tuple[int, str, bool]] = []
         self.whitelist_calls = 0
         self.raw_calls: list[dict[str, object]] = []
         self.recovered_assistant_ids: list[int] = []
@@ -209,6 +210,12 @@ class FakeService:
         if reply_mode not in {"auto", "mention", "off"}:
             raise ValueError("Reply mode must be one of auto, mention, off")
         return f"Reply mode set to {reply_mode}"
+
+    def set_conversation_timeout(self, *, chat_id: int, duration: str, commit: bool = True) -> str:
+        self.timeout_calls.append((chat_id, duration, commit))
+        if duration == "bad":
+            raise ValueError("Timeout must be a positive duration like 300, 5m, or 1h")
+        return f"Conversation timeout set to {duration}"
 
     def toggle_chat_allowlist(self, *, chat_id: int, commit: bool = True) -> str:
         _ = commit
@@ -971,6 +978,22 @@ class TelegramAppTests(unittest.IsolatedAsyncioTestCase):
         self.assertIsNotNone(stored)
         assert stored is not None
         self.assertEqual(stored.state, "completed")
+
+    async def test_timeout_command_updates_chat_setting(self) -> None:
+        await self.app._handle_update(make_update(text="/timeout 10m"))
+
+        self.assertEqual(self.service.timeout_calls, [(100, "10m", False)])
+        self.assertEqual(self.api.sent_messages[-1]["text"], "Conversation timeout set to 10m")
+        self.assertEqual(self.api.sent_messages[-1]["reply_to_message_id"], 10)
+
+    async def test_timeout_command_reports_invalid_duration(self) -> None:
+        await self.app._handle_update(make_update(text="/timeout bad"))
+
+        self.assertEqual(self.service.timeout_calls, [(100, "bad", False)])
+        self.assertEqual(
+            self.api.sent_messages[-1]["text"],
+            "Timeout must be a positive duration like 300, 5m, or 1h",
+        )
 
     async def test_reply_mode_mention_allows_reply_to_stored_seed_anchor(self) -> None:
         self.service.allowed = True

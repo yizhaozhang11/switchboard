@@ -65,6 +65,12 @@ class Router:
                 return CommandAction(name="usage_error", content="Usage: /mode auto|mention|off")
             return CommandAction(name="mode", argument=command_tokens[1].strip())
 
+        if command_name == "timeout":
+            timeout_parts = head.split(maxsplit=1)
+            if len(timeout_parts) < 2:
+                return CommandAction(name="usage_error", content="Usage: /timeout <seconds|5m|1h>")
+            return CommandAction(name="timeout", argument=timeout_parts[1].strip())
+
         if command_name == "togglechat":
             argument = command_tokens[1].strip() if len(command_tokens) >= 2 else None
             return CommandAction(name="togglechat", argument=argument)

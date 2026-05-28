@@ -99,6 +99,7 @@ class ChatSettings:
     reply_mode: str
     default_model_alias: str
     skip_prefix: str
+    conversation_timeout_seconds: int = 300
 
 
 @dataclass(frozen=True)

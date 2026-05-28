@@ -543,7 +543,7 @@ class TelegramApp:
                 )
                 return
 
-        if action.name in {"model", "mode"} and not self.service.can_manage_chat(message.user_id):
+        if action.name in {"model", "mode", "timeout"} and not self.service.can_manage_chat(message.user_id):
             await self._send_reply_only_response(
                 message=message,
                 text="Only configured owners can change chat settings.",
@@ -582,6 +582,30 @@ class TelegramApp:
                     reply_text = self.service.set_reply_mode(
                         chat_id=message.chat_id,
                         reply_mode=(action.argument or ""),
+                        commit=False,
+                    )
+                    if inbox_update_ids:
+                        self.storage.inbox.complete_updates(update_ids=inbox_update_ids, commit=False)
+                    completed_in_transaction = True
+            except ValueError as exc:
+                reply_text = str(exc)
+            if completed_in_transaction:
+                await self.api.send_message(message.chat_id, reply_text, reply_to_message_id=message.message_id)
+            else:
+                await self._send_reply_only_response(
+                    message=message,
+                    text=reply_text,
+                    inbox_update_ids=inbox_update_ids,
+                )
+            return
+
+        if action.name == "timeout":
+            completed_in_transaction = False
+            try:
+                with self.storage.transaction():
+                    reply_text = self.service.set_conversation_timeout(
+                        chat_id=message.chat_id,
+                        duration=(action.argument or ""),
                         commit=False,
                     )
                     if inbox_update_ids:

@@ -6,7 +6,7 @@ import unittest
 from pathlib import Path
 from unittest import mock
 
-from app.config import Config
+from app.config import Config, MAX_CONVERSATION_TIMEOUT_SECONDS
 from app.model_catalog import DEFAULT_MODEL_CONFIG_BASENAME
 
 
@@ -61,6 +61,22 @@ class ConfigTests(unittest.TestCase):
                 config = Config.from_env(root_dir)
 
         self.assertEqual(config.default_model_alias, "x")
+
+    def test_from_env_rejects_out_of_range_conversation_timeout(self) -> None:
+        with tempfile.TemporaryDirectory() as tempdir:
+            root_dir = Path(tempdir)
+            (root_dir / ".env").write_text(
+                "\n".join(
+                    [
+                        "TELEGRAM_BOT_TOKEN=test-token",
+                        f"BOT_CONVERSATION_TIMEOUT_SECONDS={MAX_CONVERSATION_TIMEOUT_SECONDS + 1}",
+                    ]
+                )
+            )
+
+            with mock.patch.dict(os.environ, {}, clear=True):
+                with self.assertRaisesRegex(RuntimeError, "BOT_CONVERSATION_TIMEOUT_SECONDS must be at most"):
+                    Config.from_env(root_dir)
 
     def test_from_env_bootstraps_model_catalog_in_data_dir(self) -> None:
         with tempfile.TemporaryDirectory() as tempdir:
