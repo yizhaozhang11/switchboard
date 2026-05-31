@@ -199,6 +199,7 @@ class TelegramApp:
 
         reset_update_ids: list[int] = []
         complete_update_ids: list[int] = []
+        finalized_assistant_conversation_ids: set[int] = set()
         for entry in claimed_updates:
             if entry.realized_assistant_message_id is not None:
                 assistant_message = self.storage.conversations.get_message(entry.realized_assistant_message_id)
@@ -206,9 +207,7 @@ class TelegramApp:
                     reset_update_ids.append(entry.update_id)
                 else:
                     if assistant_message.status != "streaming":
-                        self.storage.conversations.drain_pending_messages(
-                            conversation_id=assistant_message.conversation_id,
-                        )
+                        finalized_assistant_conversation_ids.add(assistant_message.conversation_id)
                     complete_update_ids.append(entry.update_id)
             elif entry.realized_user_message_id is not None:
                 complete_update_ids.append(entry.update_id)
@@ -226,6 +225,9 @@ class TelegramApp:
                 complete_update_ids.append(entry.update_id)
             else:
                 reset_update_ids.append(entry.update_id)
+
+        for conversation_id in finalized_assistant_conversation_ids:
+            self.storage.conversations.drain_pending_messages(conversation_id=conversation_id)
 
         self.storage.inbox.reset_updates_to_queued(update_ids=tuple(sorted(set(reset_update_ids))))
         self.storage.inbox.complete_updates(update_ids=tuple(sorted(set(complete_update_ids))))

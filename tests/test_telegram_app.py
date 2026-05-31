@@ -953,11 +953,13 @@ class TelegramAppTests(unittest.IsolatedAsyncioTestCase):
             assistant_message_id=assistant_message_id,
         )
         self.storage.inbox.claim_next_ready(media_group_delay_seconds=0.0)
+        self._enqueue_updates(make_update(update_id=2, message_id=20, text="queued after finalized assistant"))
         self.storage.conversations.enqueue_pending_message(
             conversation_id=conversation.id,
             telegram_message_id=20,
             content="queued after finalized assistant",
         )
+        self.storage.inbox.claim_next_ready(media_group_delay_seconds=0.0)
         self.assertEqual(len(self.storage.conversations.list_pending_messages(conversation_id=conversation.id)), 1)
 
         await self.app._recover_claimed_updates()
@@ -968,6 +970,10 @@ class TelegramAppTests(unittest.IsolatedAsyncioTestCase):
         self.assertIsNotNone(recovered)
         assert recovered is not None
         self.assertEqual(recovered.state, "completed")
+        recovered_follow_up = self.storage.inbox.get_update(update_id=2)
+        self.assertIsNotNone(recovered_follow_up)
+        assert recovered_follow_up is not None
+        self.assertEqual(recovered_follow_up.state, "completed")
 
     async def test_command_mutation_completes_update_before_confirmation_send(self) -> None:
         self.api.send_failures_remaining = 1
