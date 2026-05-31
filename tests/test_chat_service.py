@@ -817,7 +817,7 @@ class ChatServiceTests(unittest.IsolatedAsyncioTestCase):
             ["first", "reply 1", "second"],
         )
 
-    async def test_recover_interrupted_assistant_turn_marks_failed_and_leaves_pending_follow_up(self) -> None:
+    async def test_recover_interrupted_assistant_turn_marks_failed_and_clears_pending_follow_up(self) -> None:
         self.provider.pause_after_first_event_requests = {1}
         first_task = asyncio.create_task(self._send_plain(message_id=1, text="first"))
         await asyncio.wait_for(self.provider.paused_request_started.wait(), timeout=1.0)
@@ -843,7 +843,7 @@ class ChatServiceTests(unittest.IsolatedAsyncioTestCase):
         assert recovered_assistant is not None
         self.assertEqual(recovered_assistant.status, "failed")
         self.assertIn("[interrupted: bot restarted before reply completed]", recovered_assistant.content)
-        self.assertEqual(self._pending_count(1), 1)
+        self.assertEqual(self._pending_count(1), 0)
         self.assertEqual(len(self.provider.requests), 1)
         self.assertTrue(self.api.edits)
         self.assertIn("interrupted: bot restarted", str(self.api.edits[-1]["text"]))
@@ -885,6 +885,47 @@ class ChatServiceTests(unittest.IsolatedAsyncioTestCase):
         recovered_assistant = self.storage.conversations.get_message(assistant_message_id)
         assert recovered_assistant is not None
         self.assertEqual(recovered_assistant.status, "failed")
+        self.assertTrue(self.api.sent_messages)
+        self.assertIn("interrupted: bot restarted", str(self.api.sent_messages[-1]["text"]))
+
+    async def test_recover_empty_interrupted_assistant_turn_sends_notice(self) -> None:
+        conversation = self.storage.conversations.create_conversation(chat_id=100, user_id=200, model_alias="o")
+        user_message_id = self.storage.conversations.create_message(
+            conversation_id=conversation.id,
+            chat_id=100,
+            telegram_message_id=1,
+            message_type="user",
+            parent_message_id=None,
+            provider="fake",
+            model_id="default-model",
+            model_alias="o",
+            content="hello",
+            status="complete",
+        )
+        assistant_message_id = self.storage.conversations.create_message(
+            conversation_id=conversation.id,
+            chat_id=100,
+            telegram_message_id=None,
+            message_type="assistant",
+            parent_message_id=user_message_id,
+            provider="fake",
+            model_id="default-model",
+            model_alias="o",
+            content="",
+            status="streaming",
+        )
+
+        recovered = await self.service.recover_interrupted_assistant_turn(
+            api=self.api,
+            assistant_message_id=assistant_message_id,
+            reply_to_message_id=1,
+        )
+
+        self.assertTrue(recovered)
+        recovered_assistant = self.storage.conversations.get_message(assistant_message_id)
+        assert recovered_assistant is not None
+        self.assertEqual(recovered_assistant.status, "failed")
+        self.assertEqual(recovered_assistant.content, "[interrupted: bot restarted before reply completed]")
         self.assertTrue(self.api.sent_messages)
         self.assertIn("interrupted: bot restarted", str(self.api.sent_messages[-1]["text"]))
 
@@ -1943,6 +1984,41 @@ class ChatServiceTests(unittest.IsolatedAsyncioTestCase):
             ),
             [1000, 1001, 1002],
         )
+
+    async def test_final_render_prunes_deleted_streaming_chunk_links(self) -> None:
+        self.service.render_limit = 14
+        self.provider.request_events[1] = [
+            StreamEvent(kind="text_delta", text="**alpha beta gamma**"),
+            StreamEvent(kind="done", text="**alpha beta gamma**"),
+        ]
+        incoming_message = make_message(message_id=1, text="shrinks")
+        self.storage.inbox.enqueue_messages(messages=[incoming_message])
+
+        await self.service.generate_reply(
+            api=self.api,
+            incoming_message=incoming_message,
+            settings=self.settings,
+            action=ChatAction(content="shrinks", intent="plain"),
+            inbox_update_ids=(1,),
+        )
+
+        stored = self.storage.inbox.get_update(update_id=1)
+        assert stored is not None
+        assert stored.realized_assistant_message_id is not None
+        deleted_message_ids = {delete["message_id"] for delete in self.api.deletes}
+        remaining_message_ids = [
+            int(message["message_id"])
+            for message in self.api.sent_messages
+            if int(message["message_id"]) not in deleted_message_ids
+        ]
+        self.assertEqual(
+            self.storage.conversations.list_linked_telegram_message_ids(
+                logical_message_id=stored.realized_assistant_message_id,
+            ),
+            remaining_message_ids,
+        )
+        self.assertEqual(len(remaining_message_ids), 2)
+        self.assertTrue(self.api.deletes)
 
     async def test_final_render_stays_streaming_before_final_edit(self) -> None:
         final_edit_checks = 0

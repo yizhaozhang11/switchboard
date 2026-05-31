@@ -10,7 +10,7 @@ The recovery goal is not to perfectly resume every interrupted operation. Instea
 - The bot does not call LLM providers during startup recovery.
 - Assistant messages that were still `streaming` are marked interrupted and failed.
 - If a linked Telegram bot message exists, Switchboard edits it to match the recovered DB content.
-- If no linked Telegram bot message exists but the DB has non-empty assistant content, Switchboard sends a replacement assistant message and links that new Telegram message.
+- If no linked Telegram bot message exists, Switchboard sends a replacement interruption message when it has recovered text to show, and links that new Telegram message.
 - If Telegram had received a bot message but Switchboard crashed before storing its Telegram message ID, that Telegram message may be orphaned. A duplicated replacement message is acceptable.
 - Claimed inbox updates are normalized coarsely: updates that already created local side effects are completed, while updates without realized local messages are requeued.
 
@@ -25,6 +25,7 @@ This can happen when the process crashes after Telegram accepts a bot message bu
 The simplified model intentionally accepts rare imperfections after a crash:
 
 - a user message may need to be resent;
+- queued follow-ups behind an interrupted assistant are discarded instead of being replayed later with stale context;
 - a replacement assistant message may duplicate an orphaned Telegram message;
 - a partially streamed assistant answer is finalized as interrupted rather than resumed;
 - final Telegram formatting is not reconstructed from special render checkpoints.

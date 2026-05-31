@@ -545,6 +545,31 @@ class ConversationStore:
         ).fetchall()
         return [int(row["telegram_message_id"]) for row in rows]
 
+    def prune_telegram_message_links(
+        self,
+        *,
+        logical_message_id: int,
+        keep_telegram_message_ids: tuple[int, ...],
+        commit: bool = True,
+    ) -> None:
+        if keep_telegram_message_ids:
+            placeholders = ", ".join("?" for _ in keep_telegram_message_ids)
+            self._conn.execute(
+                f"""
+                DELETE FROM telegram_message_links
+                WHERE logical_message_id = ?
+                  AND telegram_message_id NOT IN ({placeholders})
+                """,
+                (logical_message_id, *keep_telegram_message_ids),
+            )
+        else:
+            self._conn.execute(
+                "DELETE FROM telegram_message_links WHERE logical_message_id = ?",
+                (logical_message_id,),
+            )
+        if commit:
+            self._conn.commit()
+
     def get_message_by_telegram(self, *, chat_id: int, telegram_message_id: int) -> StoredMessage | None:
         row = self._conn.execute(
             """

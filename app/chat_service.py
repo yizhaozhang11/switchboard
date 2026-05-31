@@ -786,6 +786,12 @@ class ChatService:
         telegram_message_ids: list[int],
         linked_message_ids: set[int],
     ) -> None:
+        current_message_ids = tuple(telegram_message_ids)
+        self.storage.conversations.prune_telegram_message_links(
+            logical_message_id=logical_message_id,
+            keep_telegram_message_ids=current_message_ids,
+        )
+        linked_message_ids.intersection_update(current_message_ids)
         for index, telegram_message_id in enumerate(telegram_message_ids):
             if telegram_message_id in linked_message_ids:
                 continue
@@ -880,7 +886,6 @@ class ChatService:
         if conversation is None:
             return False
 
-        original_has_content = bool(message.content.strip())
         if message.status == "streaming":
             stored_text = self._interrupted_assistant_text(message.content)
             self.storage.conversations.update_message(
@@ -906,7 +911,10 @@ class ChatService:
         telegram_message_ids = self.storage.conversations.list_linked_telegram_message_ids(
             logical_message_id=assistant_message_id,
         )
-        if not stored_text.strip() or (not telegram_message_ids and not original_has_content):
+        if message.status == "streaming":
+            self.storage.conversations.drain_pending_messages(conversation_id=conversation.id)
+
+        if not stored_text.strip():
             return True
 
         session = ReplySession(
