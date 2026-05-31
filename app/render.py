@@ -86,7 +86,7 @@ class ReplySession:
         api: TelegramBotAPI,
         *,
         chat_id: int,
-        reply_to_message_id: int,
+        reply_to_message_id: int | None,
         prefix: str = "",
         limit: int = 3900,
         edit_interval_seconds: float = 1.0,
