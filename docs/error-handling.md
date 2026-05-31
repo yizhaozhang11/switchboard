@@ -25,7 +25,7 @@ This can happen when the process crashes after Telegram accepts a bot message bu
 The simplified model intentionally accepts rare imperfections after a crash:
 
 - a user message may need to be resent;
-- queued follow-ups behind an interrupted assistant are discarded instead of being replayed later with stale context;
+- queued follow-ups behind an interrupted or just-finalized assistant are discarded instead of being replayed later with stale context;
 - a replacement assistant message may duplicate an orphaned Telegram message;
 - a partially streamed assistant answer is finalized as interrupted rather than resumed;
 - final Telegram formatting is not reconstructed from special render checkpoints.

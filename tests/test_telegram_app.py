@@ -953,9 +953,16 @@ class TelegramAppTests(unittest.IsolatedAsyncioTestCase):
             assistant_message_id=assistant_message_id,
         )
         self.storage.inbox.claim_next_ready(media_group_delay_seconds=0.0)
+        self.storage.conversations.enqueue_pending_message(
+            conversation_id=conversation.id,
+            telegram_message_id=20,
+            content="queued after finalized assistant",
+        )
+        self.assertEqual(len(self.storage.conversations.list_pending_messages(conversation_id=conversation.id)), 1)
 
         await self.app._recover_claimed_updates()
 
+        self.assertEqual(len(self.storage.conversations.list_pending_messages(conversation_id=conversation.id)), 0)
         self.assertEqual(self.service.recovered_assistant_ids, [])
         recovered = self.storage.inbox.get_update(update_id=1)
         self.assertIsNotNone(recovered)

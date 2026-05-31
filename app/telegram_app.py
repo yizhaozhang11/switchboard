@@ -201,9 +201,14 @@ class TelegramApp:
         complete_update_ids: list[int] = []
         for entry in claimed_updates:
             if entry.realized_assistant_message_id is not None:
-                if self.storage.conversations.get_message(entry.realized_assistant_message_id) is None:
+                assistant_message = self.storage.conversations.get_message(entry.realized_assistant_message_id)
+                if assistant_message is None:
                     reset_update_ids.append(entry.update_id)
                 else:
+                    if assistant_message.status != "streaming":
+                        self.storage.conversations.drain_pending_messages(
+                            conversation_id=assistant_message.conversation_id,
+                        )
                     complete_update_ids.append(entry.update_id)
             elif entry.realized_user_message_id is not None:
                 complete_update_ids.append(entry.update_id)
