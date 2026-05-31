@@ -622,36 +622,16 @@ class ChatService:
                     status=persisted_status,
                 )
 
+                async def on_sent_message_id(index: int, _message_id: int) -> None:
+                    _ = index
+                    self._sync_streaming_telegram_links(
+                        chat_id=current_turn.chat_id,
+                        logical_message_id=current_turn.assistant_message_id,
+                        telegram_message_ids=session.message_ids,
+                        linked_message_ids=linked_message_ids,
+                    )
+
                 async def apply_render(*, render_markdown: bool | None) -> None:
-                    used_markdown = final if render_markdown is None else render_markdown
-                    if final:
-                        self._persist_assistant_render_state(
-                            prepared_turn=current_turn,
-                            phase="final_pending",
-                            final_status=status,
-                            reply_text=full_text,
-                            reasoning_blocks=tuple(reasoning_blocks),
-                            render_markdown=used_markdown,
-                        )
-
-                    async def on_sent_message_id(index: int, _message_id: int) -> None:
-                        if not final:
-                            return
-                        self._sync_streaming_telegram_links(
-                            chat_id=current_turn.chat_id,
-                            logical_message_id=current_turn.assistant_message_id,
-                            telegram_message_ids=session.message_ids,
-                            linked_message_ids=linked_message_ids,
-                        )
-                        self._persist_assistant_render_state(
-                            prepared_turn=current_turn,
-                            phase="final_pending",
-                            final_status=status,
-                            reply_text=full_text,
-                            reasoning_blocks=tuple(reasoning_blocks),
-                            render_markdown=used_markdown,
-                        )
-
                     await session.update(
                         render_reply_text(
                             full_text,
@@ -660,7 +640,7 @@ class ChatService:
                             render_markdown=render_markdown,
                         ),
                         force=force,
-                        on_sent_message_id=on_sent_message_id if final else None,
+                        on_sent_message_id=on_sent_message_id,
                     )
                     self._persist_assistant_state(
                         prepared_turn=current_turn,
@@ -669,15 +649,6 @@ class ChatService:
                         linked_message_ids=linked_message_ids,
                         status=persisted_status,
                     )
-                    if final:
-                        self._persist_assistant_render_state(
-                            prepared_turn=current_turn,
-                            phase="final_rendered",
-                            final_status=status,
-                            reply_text=full_text,
-                            reasoning_blocks=tuple(reasoning_blocks),
-                            render_markdown=used_markdown,
-                        )
 
                 try:
                     await apply_render(render_markdown=None)
@@ -815,6 +786,12 @@ class ChatService:
         telegram_message_ids: list[int],
         linked_message_ids: set[int],
     ) -> None:
+        current_message_ids = tuple(telegram_message_ids)
+        self.storage.conversations.prune_telegram_message_links(
+            logical_message_id=logical_message_id,
+            keep_telegram_message_ids=current_message_ids,
+        )
+        linked_message_ids.intersection_update(current_message_ids)
         for index, telegram_message_id in enumerate(telegram_message_ids):
             if telegram_message_id in linked_message_ids:
                 continue
@@ -894,6 +871,13 @@ class ChatService:
         final_render_reasoning_blocks: tuple[str, ...] = (),
         final_render_markdown: bool | None = None,
     ) -> bool:
+        _ = (
+            final_render_phase,
+            final_render_status,
+            final_render_reply_text,
+            final_render_reasoning_blocks,
+            final_render_markdown,
+        )
         message = self.storage.conversations.get_message(assistant_message_id)
         if message is None or message.message_type != "assistant":
             return False
@@ -902,134 +886,8 @@ class ChatService:
         if conversation is None:
             return False
 
-        needs_interruption_recovery = message.status == "streaming"
-
-        if needs_interruption_recovery and final_render_phase == "final_rendered" and final_render_status is not None:
-            stored_text = final_render_reply_text if final_render_reply_text is not None else message.content
-            self.storage.conversations.update_message(
-                assistant_message_id,
-                content=stored_text,
-                status=final_render_status,
-            )
-            needs_interruption_recovery = False
-        elif needs_interruption_recovery and final_render_phase == "final_pending" and final_render_status is not None:
-            stored_text = final_render_reply_text if final_render_reply_text is not None else message.content
-            telegram_message_ids = self.storage.conversations.list_linked_telegram_message_ids(
-                logical_message_id=assistant_message_id,
-            )
-            session = ReplySession(
-                api,
-                chat_id=conversation.chat_id,
-                reply_to_message_id=reply_to_message_id or (telegram_message_ids[0] if telegram_message_ids else message.id),
-                prefix=f"[{message.model_alias or conversation.model_alias}] ",
-                limit=self.render_limit,
-                edit_interval_seconds=self.render_edit_interval_seconds,
-            )
-            session.message_ids = list(telegram_message_ids)
-
-            async def apply_final_recovery_render(*, render_markdown: bool | None) -> None:
-                await session.update(
-                    render_reply_text(
-                        stored_text,
-                        list(final_render_reasoning_blocks),
-                        final=True,
-                        render_markdown=render_markdown,
-                    ),
-                    force=True,
-                )
-
-            try:
-                await apply_final_recovery_render(render_markdown=final_render_markdown)
-            except Exception:
-                logging.exception(
-                    "Failed to recover formatted final assistant render for conversation %s assistant message %s",
-                    conversation.id,
-                    assistant_message_id,
-                )
-                if final_render_markdown is False:
-                    return False
-                else:
-                    try:
-                        await apply_final_recovery_render(render_markdown=False)
-                    except Exception:
-                        logging.exception(
-                            "Failed to recover plain-text final assistant render for conversation %s assistant message %s",
-                            conversation.id,
-                            assistant_message_id,
-                        )
-                        return False
-                    else:
-                        linked_message_ids = set(telegram_message_ids)
-                        self._sync_streaming_telegram_links(
-                            chat_id=conversation.chat_id,
-                            logical_message_id=assistant_message_id,
-                            telegram_message_ids=session.message_ids,
-                            linked_message_ids=linked_message_ids,
-                        )
-                        self.storage.conversations.update_message(
-                            assistant_message_id,
-                            content=stored_text,
-                            status=final_render_status,
-                        )
-                        needs_interruption_recovery = False
-            else:
-                linked_message_ids = set(telegram_message_ids)
-                self._sync_streaming_telegram_links(
-                    chat_id=conversation.chat_id,
-                    logical_message_id=assistant_message_id,
-                    telegram_message_ids=session.message_ids,
-                    linked_message_ids=linked_message_ids,
-                )
-                self.storage.conversations.update_message(
-                    assistant_message_id,
-                    content=stored_text,
-                    status=final_render_status,
-                )
-                needs_interruption_recovery = False
-
-        if needs_interruption_recovery:
-            interruption_note = "[interrupted: bot restarted before reply completed]"
-            if message.content.strip():
-                if interruption_note in message.content:
-                    stored_text = message.content
-                else:
-                    stored_text = f"{message.content}\n\n{interruption_note}"
-            else:
-                stored_text = interruption_note
-            telegram_message_ids = self.storage.conversations.list_linked_telegram_message_ids(
-                logical_message_id=assistant_message_id,
-            )
-            reply_target = telegram_message_ids[0] if telegram_message_ids else reply_to_message_id
-            if reply_target is None:
-                return False
-            session = ReplySession(
-                api,
-                chat_id=conversation.chat_id,
-                reply_to_message_id=reply_target,
-                prefix=f"[{message.model_alias or conversation.model_alias}] ",
-                limit=self.render_limit,
-                edit_interval_seconds=self.render_edit_interval_seconds,
-            )
-            session.message_ids = list(telegram_message_ids)
-            try:
-                await session.update(
-                    render_reply_text(stored_text, [], final=True),
-                    force=True,
-                )
-            except Exception:
-                logging.exception(
-                    "Failed to update interrupted assistant render for conversation %s assistant message %s",
-                    conversation.id,
-                    assistant_message_id,
-                )
-                return False
-            linked_message_ids = set(telegram_message_ids)
-            self._sync_streaming_telegram_links(
-                chat_id=conversation.chat_id,
-                logical_message_id=assistant_message_id,
-                telegram_message_ids=session.message_ids,
-                linked_message_ids=linked_message_ids,
-            )
+        if message.status == "streaming":
+            stored_text = self._interrupted_assistant_text(message.content)
             self.storage.conversations.update_message(
                 assistant_message_id,
                 content=stored_text,
@@ -1050,20 +908,53 @@ class ChatService:
         if completion_event is not None:
             completion_event.set()
 
-        next_turn_candidate: PendingTurnCandidate | None = None
-        lock_key = (conversation.chat_id, conversation.user_id)
-        async with self._conversation_locks[lock_key]:
-            next_turn_candidate = await self._prepare_next_pending_turn_locked(
-                api=api,
-                conversation_id=conversation.id,
+        telegram_message_ids = self.storage.conversations.list_linked_telegram_message_ids(
+            logical_message_id=assistant_message_id,
+        )
+        if message.status == "streaming":
+            self.storage.conversations.drain_pending_messages(conversation_id=conversation.id)
+
+        if not stored_text.strip():
+            return True
+
+        session = ReplySession(
+            api,
+            chat_id=conversation.chat_id,
+            reply_to_message_id=reply_to_message_id,
+            prefix=f"[{message.model_alias or conversation.model_alias}] ",
+            limit=self.render_limit,
+            edit_interval_seconds=self.render_edit_interval_seconds,
+        )
+        session.message_ids = list(telegram_message_ids)
+        try:
+            await session.update(
+                render_reply_text(stored_text, [], final=True),
+                force=True,
             )
-        if next_turn_candidate is None:
-            return True
-        prepared_turn = await self._prepare_turn_from_candidate(api=api, candidate=next_turn_candidate)
-        if prepared_turn is None:
-            return True
-        await self._run_conversation_loop(api=api, prepared_turn=prepared_turn)
+        except Exception:
+            logging.exception(
+                "Failed to sync interrupted assistant render for conversation %s assistant message %s",
+                conversation.id,
+                assistant_message_id,
+            )
+            return False
+
+        linked_message_ids = set(telegram_message_ids)
+        self._sync_streaming_telegram_links(
+            chat_id=conversation.chat_id,
+            logical_message_id=assistant_message_id,
+            telegram_message_ids=session.message_ids,
+            linked_message_ids=linked_message_ids,
+        )
         return True
+
+    def _interrupted_assistant_text(self, content: str) -> str:
+        interruption_note = "[interrupted: bot restarted before reply completed]"
+        if not content.strip():
+            return interruption_note
+        if interruption_note in content:
+            return content
+        return f"{content}\n\n{interruption_note}"
 
     async def _prepare_turn_from_candidate(
         self,

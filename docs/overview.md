@@ -3,6 +3,7 @@
 Switchboard is a Telegram bot for personal use and small-group chats. It keeps conversation history locally, supports multiple LLM providers, and is built to stay simple to operate without turning every interaction into a command-heavy workflow.
 
 Use [README.md](../README.md) for setup. Use this document to understand how the bot behaves once it is running.
+For restart and failure behavior, see [error-handling.md](./error-handling.md).
 
 ## What Switchboard Does
 

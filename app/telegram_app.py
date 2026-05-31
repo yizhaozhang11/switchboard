@@ -199,89 +199,44 @@ class TelegramApp:
 
         reset_update_ids: list[int] = []
         complete_update_ids: list[int] = []
-        assistant_updates: dict[int, list[InboxUpdate]] = {}
-
+        finalized_assistant_conversation_ids: set[int] = set()
         for entry in claimed_updates:
             if entry.realized_assistant_message_id is not None:
-                assistant_updates.setdefault(entry.realized_assistant_message_id, []).append(entry)
-                continue
-            if entry.reply_sent_at is not None:
+                assistant_message = self.storage.conversations.get_message(entry.realized_assistant_message_id)
+                if assistant_message is None:
+                    reset_update_ids.append(entry.update_id)
+                else:
+                    if assistant_message.status != "streaming":
+                        finalized_assistant_conversation_ids.add(assistant_message.conversation_id)
+                    complete_update_ids.append(entry.update_id)
+            elif entry.realized_user_message_id is not None:
                 complete_update_ids.append(entry.update_id)
-                continue
-            if entry.reply_started_at is not None:
-                continue
-            if self.storage.conversations.get_message_by_telegram(
+            elif entry.reply_started_at is not None or entry.reply_sent_at is not None:
+                complete_update_ids.append(entry.update_id)
+            elif self.storage.conversations.get_message_by_telegram(
                 chat_id=entry.chat_id,
                 telegram_message_id=entry.message_id,
             ) is not None:
                 complete_update_ids.append(entry.update_id)
-                continue
-            if self.storage.conversations.find_pending_message_by_telegram(
+            elif self.storage.conversations.find_pending_message_by_telegram(
                 chat_id=entry.chat_id,
                 telegram_message_id=entry.message_id,
             ) is not None:
                 complete_update_ids.append(entry.update_id)
-                continue
-            reset_update_ids.append(entry.update_id)
+            else:
+                reset_update_ids.append(entry.update_id)
 
-        for assistant_message_id, entries in assistant_updates.items():
-            assistant_message = self.storage.conversations.get_message(assistant_message_id)
-            if assistant_message is None:
-                reset_update_ids.extend(entry.update_id for entry in entries)
-                continue
-            render_entry = entries[0]
-            render_state = self.storage.inbox.get_assistant_render_state(
-                assistant_message_id=assistant_message_id,
-            )
-            recovered = await self.service.recover_interrupted_assistant_turn(
-                api=self.api,
-                assistant_message_id=assistant_message_id,
-                reply_to_message_id=render_entry.message_id,
-                final_render_phase=(
-                    render_state.phase if render_state is not None else render_entry.assistant_render_phase
-                ),
-                final_render_status=(
-                    render_state.final_status
-                    if render_state is not None
-                    else render_entry.assistant_render_final_status
-                ),
-                final_render_reply_text=(
-                    render_state.reply_text if render_state is not None else render_entry.assistant_render_reply_text
-                ),
-                final_render_reasoning_blocks=(
-                    render_state.reasoning_blocks
-                    if render_state is not None
-                    else render_entry.assistant_render_reasoning_blocks
-                ),
-                final_render_markdown=(
-                    render_state.render_markdown if render_state is not None else render_entry.assistant_render_markdown
-                ),
-            )
-            if recovered:
-                complete_update_ids.extend(entry.update_id for entry in entries)
+        for conversation_id in finalized_assistant_conversation_ids:
+            self.storage.conversations.drain_pending_messages(conversation_id=conversation_id)
 
         self.storage.inbox.reset_updates_to_queued(update_ids=tuple(sorted(set(reset_update_ids))))
         self.storage.inbox.complete_updates(update_ids=tuple(sorted(set(complete_update_ids))))
-        await self._recover_orphaned_streaming_assistant_turns(
-            skip_assistant_message_ids=set(assistant_updates),
-        )
 
-    async def _recover_orphaned_streaming_assistant_turns(self, *, skip_assistant_message_ids: set[int]) -> None:
         for assistant_message in self.storage.conversations.list_streaming_assistant_messages():
-            if assistant_message.id in skip_assistant_message_ids:
-                continue
-            render_state = self.storage.inbox.get_assistant_render_state(
-                assistant_message_id=assistant_message.id,
-            )
             await self.service.recover_interrupted_assistant_turn(
                 api=self.api,
                 assistant_message_id=assistant_message.id,
                 reply_to_message_id=self._assistant_recovery_reply_to_message_id(assistant_message),
-                final_render_phase=render_state.phase if render_state is not None else None,
-                final_render_status=render_state.final_status if render_state is not None else None,
-                final_render_reply_text=render_state.reply_text if render_state is not None else None,
-                final_render_reasoning_blocks=render_state.reasoning_blocks if render_state is not None else (),
-                final_render_markdown=render_state.render_markdown if render_state is not None else None,
             )
 
     def _assistant_recovery_reply_to_message_id(self, assistant_message: StoredMessage) -> int | None:
@@ -414,6 +369,17 @@ class TelegramApp:
                 return
         if not self.service.is_reply_allowed(chat_id=incoming.chat_id, user_id=incoming.user_id):
             return
+        if self._is_untracked_bot_reply(incoming):
+            await self._send_reply_only_response(
+                message=incoming,
+                text=(
+                    "I do not have local state for the bot message you replied to. "
+                    "This can happen if I restarted while sending it. Please resend your message "
+                    "or reply to a different stored bot response."
+                ),
+                inbox_update_ids=inbox_update_ids,
+            )
+            return
 
         await self.service.generate_reply(
             api=self.api,
@@ -443,6 +409,14 @@ class TelegramApp:
             return False
         conversation = self.storage.conversations.get_conversation(pending_message.conversation_id)
         return conversation is not None and conversation.user_id == incoming.user_id
+
+    def _is_untracked_bot_reply(self, incoming: IncomingMessage) -> bool:
+        if not incoming.reply_to_bot or incoming.reply_to_message_id is None:
+            return False
+        return self.storage.conversations.get_message_by_telegram(
+            chat_id=incoming.chat_id,
+            telegram_message_id=incoming.reply_to_message_id,
+        ) is None
 
     async def _send_reply_only_response(
         self,

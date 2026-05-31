@@ -652,7 +652,7 @@ class TelegramAppTests(unittest.IsolatedAsyncioTestCase):
         self.assertEqual(stored.state, "completed")
         self.assertIsNotNone(stored.reply_sent_at)
 
-    async def test_claimed_reply_only_updates_with_started_but_unsent_reply_stay_claimed_on_recovery(self) -> None:
+    async def test_claimed_reply_only_updates_with_started_but_unsent_reply_complete_on_recovery(self) -> None:
         self._enqueue_updates(make_update(update_id=1, message_id=10, text="/help"))
         claim = self.storage.inbox.claim_next_ready(media_group_delay_seconds=0.0)
         self.assertIsNotNone(claim)
@@ -663,7 +663,7 @@ class TelegramAppTests(unittest.IsolatedAsyncioTestCase):
         recovered = self.storage.inbox.get_update(update_id=1)
         self.assertIsNotNone(recovered)
         assert recovered is not None
-        self.assertEqual(recovered.state, "claimed")
+        self.assertEqual(recovered.state, "completed")
 
     async def test_reply_only_send_failure_leaves_started_claim_claimed(self) -> None:
         self.api.send_failures_remaining = 1
@@ -764,7 +764,7 @@ class TelegramAppTests(unittest.IsolatedAsyncioTestCase):
         assert stored is not None
         self.assertEqual(stored.state, "claimed")
 
-    async def test_claimed_assistant_updates_stay_claimed_when_recovery_fails(self) -> None:
+    async def test_claimed_assistant_updates_complete_even_when_recovery_fails(self) -> None:
         conversation = self.storage.conversations.create_conversation(chat_id=100, user_id=200, model_alias="o")
         user_message_id = self.storage.conversations.create_message(
             conversation_id=conversation.id,
@@ -804,7 +804,7 @@ class TelegramAppTests(unittest.IsolatedAsyncioTestCase):
         recovered = self.storage.inbox.get_update(update_id=1)
         self.assertIsNotNone(recovered)
         assert recovered is not None
-        self.assertEqual(recovered.state, "claimed")
+        self.assertEqual(recovered.state, "completed")
 
     async def test_claimed_streaming_assistant_updates_trigger_recovery(self) -> None:
         conversation = self.storage.conversations.create_conversation(chat_id=100, user_id=200, model_alias="o")
@@ -914,17 +914,13 @@ class TelegramAppTests(unittest.IsolatedAsyncioTestCase):
 
         self.assertEqual(self.service.recovered_assistant_ids, [orphan_assistant_message_id])
         self.assertEqual(self.service.recovery_calls[0]["reply_to_message_id"], 20)
-        self.assertEqual(self.service.recovery_calls[0]["final_render_phase"], "final_rendered")
-        self.assertEqual(self.service.recovery_calls[0]["final_render_status"], "complete")
-        self.assertEqual(self.service.recovery_calls[0]["final_render_reply_text"], "done follow-up")
-        self.assertEqual(self.service.recovery_calls[0]["final_render_reasoning_blocks"], ("reasoning",))
-        self.assertFalse(self.service.recovery_calls[0]["final_render_markdown"])
+        self.assertNotIn("final_render_phase", self.service.recovery_calls[0])
         stored_update = self.storage.inbox.get_update(update_id=2)
         self.assertIsNotNone(stored_update)
         assert stored_update is not None
         self.assertEqual(stored_update.state, "completed")
 
-    async def test_claimed_final_assistant_updates_trigger_recovery(self) -> None:
+    async def test_claimed_final_assistant_updates_complete_without_recovery(self) -> None:
         conversation = self.storage.conversations.create_conversation(chat_id=100, user_id=200, model_alias="o")
         user_message_id = self.storage.conversations.create_message(
             conversation_id=conversation.id,
@@ -957,14 +953,27 @@ class TelegramAppTests(unittest.IsolatedAsyncioTestCase):
             assistant_message_id=assistant_message_id,
         )
         self.storage.inbox.claim_next_ready(media_group_delay_seconds=0.0)
+        self._enqueue_updates(make_update(update_id=2, message_id=20, text="queued after finalized assistant"))
+        self.storage.conversations.enqueue_pending_message(
+            conversation_id=conversation.id,
+            telegram_message_id=20,
+            content="queued after finalized assistant",
+        )
+        self.storage.inbox.claim_next_ready(media_group_delay_seconds=0.0)
+        self.assertEqual(len(self.storage.conversations.list_pending_messages(conversation_id=conversation.id)), 1)
 
         await self.app._recover_claimed_updates()
 
-        self.assertEqual(self.service.recovered_assistant_ids, [assistant_message_id])
+        self.assertEqual(len(self.storage.conversations.list_pending_messages(conversation_id=conversation.id)), 0)
+        self.assertEqual(self.service.recovered_assistant_ids, [])
         recovered = self.storage.inbox.get_update(update_id=1)
         self.assertIsNotNone(recovered)
         assert recovered is not None
         self.assertEqual(recovered.state, "completed")
+        recovered_follow_up = self.storage.inbox.get_update(update_id=2)
+        self.assertIsNotNone(recovered_follow_up)
+        assert recovered_follow_up is not None
+        self.assertEqual(recovered_follow_up.state, "completed")
 
     async def test_command_mutation_completes_update_before_confirmation_send(self) -> None:
         self.api.send_failures_remaining = 1
@@ -978,6 +987,17 @@ class TelegramAppTests(unittest.IsolatedAsyncioTestCase):
         self.assertIsNotNone(stored)
         assert stored is not None
         self.assertEqual(stored.state, "completed")
+
+
+    async def test_plain_reply_to_untracked_bot_message_sends_explanatory_reply(self) -> None:
+        self.service.allowed = True
+
+        await self.app._handle_update(make_update(text="what about this?", reply_to_bot=True))
+
+        self.assertEqual(self.service.generate_calls, [])
+        self.assertEqual(len(self.api.sent_messages), 1)
+        self.assertEqual(self.api.sent_messages[0]["reply_to_message_id"], 10)
+        self.assertIn("do not have local state", self.api.sent_messages[0]["text"])
 
     async def test_timeout_command_updates_chat_setting(self) -> None:
         await self.app._handle_update(make_update(text="/timeout 10m"))
