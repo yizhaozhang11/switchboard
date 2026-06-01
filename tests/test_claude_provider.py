@@ -24,6 +24,7 @@ class FakeMessagesAPI:
         thinking: dict[str, object] | None = None,
         output_config: dict[str, object] | None = None,
         tools: list[dict[str, object]] | None = None,
+        extra_headers: dict[str, str] | None = None,
     ):
         self.calls.append(
             {
@@ -35,6 +36,7 @@ class FakeMessagesAPI:
                 "thinking": thinking,
                 "output_config": output_config,
                 "tools": tools,
+                "extra_headers": extra_headers,
             }
         )
 
@@ -162,6 +164,7 @@ class ClaudeProviderTests(unittest.IsolatedAsyncioTestCase):
                 }
             ],
         )
+        self.assertIsNone(client.messages.calls[0]["extra_headers"])
 
     async def test_stream_reply_uses_configured_prompt_cache_ttl(self) -> None:
         provider = self._make_provider(prompt_cache_ttl="1h")
@@ -190,6 +193,10 @@ class ClaudeProviderTests(unittest.IsolatedAsyncioTestCase):
         self.assertEqual(
             client.messages.calls[0]["messages"][0]["content"],
             [{"type": "text", "text": "Hi", "cache_control": cache_control}],
+        )
+        self.assertEqual(
+            client.messages.calls[0]["extra_headers"],
+            {"anthropic-beta": "extended-cache-ttl-2025-04-11"},
         )
 
     async def test_stream_reply_builds_claude_request_and_streams_text(self) -> None:
@@ -229,6 +236,7 @@ class ClaudeProviderTests(unittest.IsolatedAsyncioTestCase):
         )
         self.assertEqual(call["output_config"], {"effort": "high"})
         self.assertIsNone(call["tools"])
+        self.assertIsNone(call["extra_headers"])
         self.assertEqual(
             call["messages"],
             [

@@ -17,6 +17,7 @@ CLAUDE_WEB_SEARCH_TOOL_TYPE = "web_search_20250305"
 CLAUDE_WEB_FETCH_TOOL_TYPE = "web_fetch_20250910"
 CLAUDE_PROMPT_CACHE_TTLS = {"5m", "1h"}
 DEFAULT_CLAUDE_PROMPT_CACHE_TTL = "5m"
+CLAUDE_EXTENDED_CACHE_TTL_BETA = "extended-cache-ttl-2025-04-11"
 
 
 class ClaudeProvider:
@@ -57,6 +58,11 @@ class ClaudeProvider:
                 api_key=self.api_key, max_retries=0, timeout=120
             )
         return self._client
+
+    def _extra_headers(self) -> dict[str, str] | None:
+        if self.prompt_cache_ttl != "1h":
+            return None
+        return {"anthropic-beta": CLAUDE_EXTENDED_CACHE_TTL_BETA}
 
     def _cache_control(self) -> dict[str, str] | None:
         if self.prompt_cache_ttl is None:
@@ -167,6 +173,9 @@ class ClaudeProvider:
                 "max_tokens": request.model.max_output_tokens or DEFAULT_MAX_TOKENS,
                 "stream": True,
             }
+            extra_headers = self._extra_headers()
+            if extra_headers is not None:
+                create_kwargs["extra_headers"] = extra_headers
             thinking = self._build_thinking_config(request)
             if thinking is not None:
                 create_kwargs["thinking"] = thinking

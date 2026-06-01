@@ -94,7 +94,7 @@ Notes:
 - `SAFETY_IDENTIFIER_SALT`, when set, must be at least 16 characters long
 - the model catalog defaults to `${BOT_DATA_DIR}/models.toml`
 - reasoning-capable OpenAI, Gemini, and Grok entries can set `reasoning_effort` in the model catalog
-- Claude prompt caching is enabled by default with a 5-minute TTL; set `BOT_CLAUDE_PROMPT_CACHE_TTL=1h` for the extended TTL or `off` to disable it
+- Claude prompt caching is enabled by default with a 5-minute TTL; set `BOT_CLAUDE_PROMPT_CACHE_TTL=1h` for the Anthropic extended-cache beta TTL or `off` to disable it
 
 ## Running
 
