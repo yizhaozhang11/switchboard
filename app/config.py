@@ -11,7 +11,6 @@ from app.model_catalog import (
     load_model_catalog,
 )
 
-
 DEFAULT_SYSTEM_PROMPT = (
     "You are a helpful assistant in a Telegram chat. "
     "Answer clearly and briefly, keep context local to the active conversation, "
@@ -20,6 +19,8 @@ DEFAULT_SYSTEM_PROMPT = (
 
 VALID_REPLY_MODES = {"auto", "mention", "off"}
 MAX_CONVERSATION_TIMEOUT_SECONDS = 3650 * 24 * 60 * 60
+VALID_CLAUDE_PROMPT_CACHE_TTLS = {"5m", "1h"}
+CLAUDE_PROMPT_CACHE_DISABLED_VALUES = {"", "0", "off", "false", "none", "disabled"}
 
 
 def load_dotenv(dotenv_path: Path) -> None:
@@ -33,6 +34,18 @@ def load_dotenv(dotenv_path: Path) -> None:
         key = key.strip()
         value = value.strip().strip('"').strip("'")
         os.environ.setdefault(key, value)
+
+
+def parse_claude_prompt_cache_ttl(raw_value: str) -> str | None:
+    normalized = raw_value.strip().lower()
+    if normalized in CLAUDE_PROMPT_CACHE_DISABLED_VALUES:
+        return None
+    if normalized not in VALID_CLAUDE_PROMPT_CACHE_TTLS:
+        allowed = sorted(
+            VALID_CLAUDE_PROMPT_CACHE_TTLS | CLAUDE_PROMPT_CACHE_DISABLED_VALUES
+        )
+        raise RuntimeError(f"BOT_CLAUDE_PROMPT_CACHE_TTL must be one of {allowed}")
+    return normalized
 
 
 def parse_owner_ids(raw_value: str) -> tuple[int, ...]:
@@ -87,6 +100,7 @@ class Config:
     model_catalog_path: Path
     model_catalog: ModelCatalog
     system_prompt: str
+    claude_prompt_cache_ttl: str | None = "5m"
     safety_identifier_salt: str | None = None
     poll_timeout_seconds: int = 30
     render_edit_interval_seconds: float = 1.0
@@ -100,9 +114,13 @@ class Config:
         if not telegram_bot_token:
             raise RuntimeError("TELEGRAM_BOT_TOKEN is required")
 
-        default_reply_mode = os.getenv("BOT_DEFAULT_REPLY_MODE", "auto").strip() or "auto"
+        default_reply_mode = (
+            os.getenv("BOT_DEFAULT_REPLY_MODE", "auto").strip() or "auto"
+        )
         if default_reply_mode not in VALID_REPLY_MODES:
-            raise RuntimeError(f"BOT_DEFAULT_REPLY_MODE must be one of {sorted(VALID_REPLY_MODES)}")
+            raise RuntimeError(
+                f"BOT_DEFAULT_REPLY_MODE must be one of {sorted(VALID_REPLY_MODES)}"
+            )
 
         data_dir = Path(os.getenv("BOT_DATA_DIR", "./data")).expanduser()
         if not data_dir.is_absolute():
@@ -116,7 +134,9 @@ class Config:
             if not model_catalog_path.is_absolute():
                 model_catalog_path = (root_dir / model_catalog_path).resolve()
             if not model_catalog_path.is_file():
-                raise RuntimeError(f"BOT_MODEL_CONFIG_PATH does not exist: {model_catalog_path}")
+                raise RuntimeError(
+                    f"BOT_MODEL_CONFIG_PATH does not exist: {model_catalog_path}"
+                )
         else:
             model_catalog_path = data_dir / DEFAULT_MODEL_CONFIG_BASENAME
             ensure_model_catalog(model_catalog_path)
@@ -133,17 +153,26 @@ class Config:
             xai_api_key=xai_api_key,
             model_catalog=model_catalog,
         )
-        conversation_timeout_seconds = int(os.getenv("BOT_CONVERSATION_TIMEOUT_SECONDS", "300"))
+        conversation_timeout_seconds = int(
+            os.getenv("BOT_CONVERSATION_TIMEOUT_SECONDS", "300")
+        )
         if conversation_timeout_seconds <= 0:
-            raise RuntimeError("BOT_CONVERSATION_TIMEOUT_SECONDS must be greater than 0")
+            raise RuntimeError(
+                "BOT_CONVERSATION_TIMEOUT_SECONDS must be greater than 0"
+            )
         if conversation_timeout_seconds > MAX_CONVERSATION_TIMEOUT_SECONDS:
             raise RuntimeError(
                 "BOT_CONVERSATION_TIMEOUT_SECONDS must be at most "
                 f"{MAX_CONVERSATION_TIMEOUT_SECONDS}"
             )
+        claude_prompt_cache_ttl = parse_claude_prompt_cache_ttl(
+            os.getenv("BOT_CLAUDE_PROMPT_CACHE_TTL", "5m")
+        )
         safety_identifier_salt = os.getenv("SAFETY_IDENTIFIER_SALT", "").strip() or None
         if safety_identifier_salt is not None and len(safety_identifier_salt) < 16:
-            raise RuntimeError("SAFETY_IDENTIFIER_SALT must be at least 16 characters when set")
+            raise RuntimeError(
+                "SAFETY_IDENTIFIER_SALT must be at least 16 characters when set"
+            )
 
         return cls(
             telegram_bot_token=telegram_bot_token,
@@ -161,5 +190,6 @@ class Config:
             model_catalog_path=model_catalog_path,
             model_catalog=model_catalog,
             system_prompt=os.getenv("BOT_SYSTEM_PROMPT", DEFAULT_SYSTEM_PROMPT),
+            claude_prompt_cache_ttl=claude_prompt_cache_ttl,
             safety_identifier_salt=safety_identifier_salt,
         )

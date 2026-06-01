@@ -17,7 +17,6 @@ from app.telegram_api import TelegramBotAPI
 from app.telegram_app import TelegramApp
 from app.types import ModelSpec
 
-
 HTTP_CLIENT_LOGGERS = ("httpx", "httpcore")
 
 
@@ -49,7 +48,11 @@ def validate_persisted_model_aliases(
     registry: ProviderRegistry,
     model_catalog_path: Path,
 ) -> None:
-    missing_aliases = [alias for alias in storage.list_referenced_model_aliases() if registry.resolve(alias) is None]
+    missing_aliases = [
+        alias
+        for alias in storage.list_referenced_model_aliases()
+        if registry.resolve(alias) is None
+    ]
     if not missing_aliases:
         return
     alias_list = ", ".join(missing_aliases)
@@ -63,16 +66,28 @@ def validate_persisted_model_aliases(
 def build_registry(config: Config) -> ProviderRegistry:
     providers = []
     if config.openai_api_key:
-        providers.append(OpenAIProvider(config.openai_api_key, _provider_models(config, "openai")))
+        providers.append(
+            OpenAIProvider(config.openai_api_key, _provider_models(config, "openai"))
+        )
 
     if config.gemini_api_key:
-        providers.append(GeminiProvider(config.gemini_api_key, _provider_models(config, "gemini")))
+        providers.append(
+            GeminiProvider(config.gemini_api_key, _provider_models(config, "gemini"))
+        )
 
     if config.anthropic_api_key:
-        providers.append(ClaudeProvider(config.anthropic_api_key, _provider_models(config, "claude")))
+        providers.append(
+            ClaudeProvider(
+                config.anthropic_api_key,
+                _provider_models(config, "claude"),
+                prompt_cache_ttl=config.claude_prompt_cache_ttl,
+            )
+        )
 
     if config.xai_api_key:
-        providers.append(GrokProvider(config.xai_api_key, _provider_models(config, "grok")))
+        providers.append(
+            GrokProvider(config.xai_api_key, _provider_models(config, "grok"))
+        )
 
     if not providers:
         raise RuntimeError(

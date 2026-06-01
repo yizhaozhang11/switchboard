@@ -3,20 +3,42 @@ from __future__ import annotations
 import base64
 from typing import Any, AsyncIterator
 
-from app.types import ChatRequest, ConversationMessage, ModelSpec, StreamEvent, build_content_parts
+from app.types import (
+    ChatRequest,
+    ConversationMessage,
+    ModelSpec,
+    StreamEvent,
+    build_content_parts,
+)
 
 DEFAULT_MAX_TOKENS = 8192
 DEFAULT_THINKING_BUDGET_TOKENS = 2048
 CLAUDE_WEB_SEARCH_TOOL_TYPE = "web_search_20250305"
 CLAUDE_WEB_FETCH_TOOL_TYPE = "web_fetch_20250910"
+CLAUDE_PROMPT_CACHE_TTLS = {"5m", "1h"}
+DEFAULT_CLAUDE_PROMPT_CACHE_TTL = "5m"
 
 
 class ClaudeProvider:
     name = "claude"
 
-    def __init__(self, api_key: str, models: list[ModelSpec]) -> None:
+    def __init__(
+        self,
+        api_key: str,
+        models: list[ModelSpec],
+        *,
+        prompt_cache_ttl: str | None = DEFAULT_CLAUDE_PROMPT_CACHE_TTL,
+    ) -> None:
+        if (
+            prompt_cache_ttl is not None
+            and prompt_cache_ttl not in CLAUDE_PROMPT_CACHE_TTLS
+        ):
+            raise ValueError(
+                f"prompt_cache_ttl must be one of {sorted(CLAUDE_PROMPT_CACHE_TTLS)} or None"
+            )
         self.api_key = api_key
         self._models = list(models)
+        self.prompt_cache_ttl = prompt_cache_ttl
         self._client = None
 
     def get_models(self) -> list[ModelSpec]:
@@ -26,19 +48,68 @@ class ClaudeProvider:
         if self._client is None:
             try:
                 from anthropic import AsyncAnthropic
-            except ImportError as exc:  # pragma: no cover - covered by packaging/bootstrap
+            except (
+                ImportError
+            ) as exc:  # pragma: no cover - covered by packaging/bootstrap
                 raise RuntimeError("anthropic is not installed") from exc
 
-            self._client = AsyncAnthropic(api_key=self.api_key, max_retries=0, timeout=120)
+            self._client = AsyncAnthropic(
+                api_key=self.api_key, max_retries=0, timeout=120
+            )
         return self._client
 
-    def _build_messages(self, conversation: list[ConversationMessage]) -> list[dict[str, object]]:
+    def _cache_control(self) -> dict[str, str] | None:
+        if self.prompt_cache_ttl is None:
+            return None
+        return {"type": "ephemeral", "ttl": self.prompt_cache_ttl}
+
+    def _add_cache_control_to_last_message_block(
+        self, messages: list[dict[str, object]]
+    ) -> None:
+        cache_control = self._cache_control()
+        if cache_control is None or not messages:
+            return
+
+        content = messages[-1]["content"]
+        if isinstance(content, str):
+            if not content:
+                return
+            messages[-1]["content"] = [
+                {"type": "text", "text": content, "cache_control": cache_control}
+            ]
+            return
+
+        if not isinstance(content, list) or not content:
+            return
+        last_block = content[-1]
+        if isinstance(last_block, dict):
+            last_block["cache_control"] = cache_control
+
+    def _build_system_prompt(
+        self, system_prompt: str | None
+    ) -> str | list[dict[str, object]] | None:
+        if not system_prompt:
+            return None
+        cache_control = self._cache_control()
+        if cache_control is None:
+            return system_prompt
+        return [{"type": "text", "text": system_prompt, "cache_control": cache_control}]
+
+    def _build_messages(
+        self, conversation: list[ConversationMessage]
+    ) -> list[dict[str, object]]:
         messages: list[dict[str, object]] = []
         for message in conversation:
             role = "assistant" if message.role == "assistant" else "user"
-            message_parts = message.parts or build_content_parts(message.content, message.images)
+            message_parts = message.parts or build_content_parts(
+                message.content, message.images
+            )
             if all(part.kind == "text" for part in message_parts):
-                content = message.content if message.content else "".join(part.text for part in message_parts)
+                content = (
+                    message.content
+                    if message.content
+                    else "".join(part.text for part in message_parts)
+                )
                 messages.append({"role": role, "content": content})
                 continue
 
@@ -62,6 +133,7 @@ class ClaudeProvider:
                     }
                 )
             messages.append({"role": role, "content": content_blocks})
+        self._add_cache_control_to_last_message_block(messages)
         return messages
 
     def _build_thinking_config(self, request: ChatRequest) -> dict[str, object] | None:
@@ -69,7 +141,9 @@ class ClaudeProvider:
             return None
         if request.model.thinking_mode == "adaptive":
             return {"type": "adaptive", "display": "summarized"}
-        budget_tokens = request.model.thinking_budget_tokens or DEFAULT_THINKING_BUDGET_TOKENS
+        budget_tokens = (
+            request.model.thinking_budget_tokens or DEFAULT_THINKING_BUDGET_TOKENS
+        )
         return {
             "type": "enabled",
             "budget_tokens": budget_tokens,
@@ -88,7 +162,7 @@ class ClaudeProvider:
         try:
             create_kwargs: dict[str, object] = {
                 "model": request.model.model_id,
-                "system": request.system_prompt or None,
+                "system": self._build_system_prompt(request.system_prompt),
                 "messages": self._build_messages(request.conversation),
                 "max_tokens": request.model.max_output_tokens or DEFAULT_MAX_TOKENS,
                 "stream": True,
@@ -101,7 +175,9 @@ class ClaudeProvider:
                 create_kwargs["output_config"] = output_config
             tools: list[dict[str, object]] = []
             if "search" in request.requested_tools:
-                tools.append({"type": CLAUDE_WEB_SEARCH_TOOL_TYPE, "name": "web_search"})
+                tools.append(
+                    {"type": CLAUDE_WEB_SEARCH_TOOL_TYPE, "name": "web_search"}
+                )
             if "fetch" in request.requested_tools:
                 tools.append({"type": CLAUDE_WEB_FETCH_TOOL_TYPE, "name": "web_fetch"})
             if tools:
@@ -125,7 +201,9 @@ class ClaudeProvider:
                     if isinstance(index, int) and isinstance(block_type, str):
                         thinking_blocks[index] = block_type
                     if block_type == "redacted_thinking":
-                        yield StreamEvent(kind="reasoning_delta", text="[redacted_thinking]")
+                        yield StreamEvent(
+                            kind="reasoning_delta", text="[redacted_thinking]"
+                        )
                 elif event_type == "content_block_delta":
                     delta = getattr(event, "delta", None)
                     delta_type = getattr(delta, "type", None)
@@ -150,7 +228,9 @@ class ClaudeProvider:
                     message = getattr(event, "message", None)
                     event_usage = getattr(message, "usage", None)
                     if event_usage is not None:
-                        usage = {"input_tokens": getattr(event_usage, "input_tokens", 0)}
+                        usage = {
+                            "input_tokens": getattr(event_usage, "input_tokens", 0)
+                        }
                 elif event_type == "message_delta":
                     event_usage = getattr(event, "usage", None)
                     if event_usage is not None:
@@ -161,7 +241,9 @@ class ClaudeProvider:
                 elif event_type == "error":
                     error = getattr(event, "error", None)
                     if error is None:
-                        yield StreamEvent(kind="error", text="Unknown Claude streaming error")
+                        yield StreamEvent(
+                            kind="error", text="Unknown Claude streaming error"
+                        )
                     else:
                         error_type = getattr(error, "type", "error")
                         message = getattr(error, "message", str(error))

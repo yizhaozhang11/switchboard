@@ -17,7 +17,7 @@ class FakeMessagesAPI:
         self,
         *,
         model: str,
-        system: str | None,
+        system: object,
         messages: list[dict[str, object]],
         max_tokens: int,
         stream: bool,
@@ -44,7 +44,9 @@ class FakeMessagesAPI:
                 events = [
                     types.SimpleNamespace(
                         type="message_start",
-                        message=types.SimpleNamespace(usage=types.SimpleNamespace(input_tokens=19)),
+                        message=types.SimpleNamespace(
+                            usage=types.SimpleNamespace(input_tokens=19)
+                        ),
                     ),
                     types.SimpleNamespace(
                         type="content_block_delta",
@@ -87,7 +89,7 @@ class ClaudeProviderTests(unittest.IsolatedAsyncioTestCase):
         else:
             sys.modules["anthropic"] = self._saved_module
 
-    def _make_provider(self) -> ClaudeProvider:
+    def _make_provider(self, *, prompt_cache_ttl: str | None = None) -> ClaudeProvider:
         return ClaudeProvider(
             api_key="test-key",
             models=[
@@ -119,6 +121,75 @@ class ClaudeProviderTests(unittest.IsolatedAsyncioTestCase):
                     thinking_budget_tokens=2048,
                 ),
             ],
+            prompt_cache_ttl=prompt_cache_ttl,
+        )
+
+    async def test_stream_reply_adds_default_prompt_cache_controls(self) -> None:
+        provider = ClaudeProvider(
+            api_key="test-key",
+            models=[self._make_provider().get_models()[0]],
+        )
+        model = provider.get_models()[0]
+        request = ChatRequest(
+            model=model,
+            conversation=[ConversationMessage(role="user", content="Hi")],
+            system_prompt="Answer briefly.",
+        )
+
+        _ = [event async for event in provider.stream_reply(request)]
+
+        client = provider._client
+        assert client is not None
+        cache_control = {"type": "ephemeral", "ttl": "5m"}
+        self.assertEqual(
+            client.messages.calls[0]["system"],
+            [
+                {
+                    "type": "text",
+                    "text": "Answer briefly.",
+                    "cache_control": cache_control,
+                }
+            ],
+        )
+        self.assertEqual(
+            client.messages.calls[0]["messages"],
+            [
+                {
+                    "role": "user",
+                    "content": [
+                        {"type": "text", "text": "Hi", "cache_control": cache_control}
+                    ],
+                }
+            ],
+        )
+
+    async def test_stream_reply_uses_configured_prompt_cache_ttl(self) -> None:
+        provider = self._make_provider(prompt_cache_ttl="1h")
+        model = provider.get_models()[0]
+        request = ChatRequest(
+            model=model,
+            conversation=[ConversationMessage(role="user", content="Hi")],
+            system_prompt="Answer briefly.",
+        )
+
+        _ = [event async for event in provider.stream_reply(request)]
+
+        client = provider._client
+        assert client is not None
+        cache_control = {"type": "ephemeral", "ttl": "1h"}
+        self.assertEqual(
+            client.messages.calls[0]["system"],
+            [
+                {
+                    "type": "text",
+                    "text": "Answer briefly.",
+                    "cache_control": cache_control,
+                }
+            ],
+        )
+        self.assertEqual(
+            client.messages.calls[0]["messages"][0]["content"],
+            [{"type": "text", "text": "Hi", "cache_control": cache_control}],
         )
 
     async def test_stream_reply_builds_claude_request_and_streams_text(self) -> None:
@@ -138,7 +209,11 @@ class ClaudeProviderTests(unittest.IsolatedAsyncioTestCase):
 
         self.assertEqual(
             [(event.kind, event.text) for event in events],
-            [("text_delta", "Hello "), ("text_delta", "Claude"), ("done", "Hello Claude")],
+            [
+                ("text_delta", "Hello "),
+                ("text_delta", "Claude"),
+                ("done", "Hello Claude"),
+            ],
         )
         self.assertEqual(events[-1].usage, {"input_tokens": 19, "output_tokens": 8})
 
@@ -149,7 +224,9 @@ class ClaudeProviderTests(unittest.IsolatedAsyncioTestCase):
         self.assertEqual(call["system"], "Answer briefly.")
         self.assertEqual(call["max_tokens"], 8192)
         self.assertTrue(call["stream"])
-        self.assertEqual(call["thinking"], {"type": "adaptive", "display": "summarized"})
+        self.assertEqual(
+            call["thinking"], {"type": "adaptive", "display": "summarized"}
+        )
         self.assertEqual(call["output_config"], {"effort": "high"})
         self.assertIsNone(call["tools"])
         self.assertEqual(
@@ -314,7 +391,9 @@ class ClaudeProviderTests(unittest.IsolatedAsyncioTestCase):
         client.messages.next_events = [
             types.SimpleNamespace(
                 type="message_start",
-                message=types.SimpleNamespace(usage=types.SimpleNamespace(input_tokens=13)),
+                message=types.SimpleNamespace(
+                    usage=types.SimpleNamespace(input_tokens=13)
+                ),
             ),
             types.SimpleNamespace(
                 type="content_block_start",
@@ -387,7 +466,9 @@ class ClaudeProviderTests(unittest.IsolatedAsyncioTestCase):
         model = provider.get_models()[0]
         request = ChatRequest(
             model=model,
-            conversation=[ConversationMessage(role="user", content="Analyze https://example.com")],
+            conversation=[
+                ConversationMessage(role="user", content="Analyze https://example.com")
+            ],
             requested_tools=("fetch",),
         )
 

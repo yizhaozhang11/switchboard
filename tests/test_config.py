@@ -75,7 +75,9 @@ class ConfigTests(unittest.TestCase):
             )
 
             with mock.patch.dict(os.environ, {}, clear=True):
-                with self.assertRaisesRegex(RuntimeError, "BOT_CONVERSATION_TIMEOUT_SECONDS must be at most"):
+                with self.assertRaisesRegex(
+                    RuntimeError, "BOT_CONVERSATION_TIMEOUT_SECONDS must be at most"
+                ):
                     Config.from_env(root_dir)
 
     def test_from_env_bootstraps_model_catalog_in_data_dir(self) -> None:
@@ -92,7 +94,10 @@ class ConfigTests(unittest.TestCase):
 
             with mock.patch.dict(os.environ, {}, clear=True):
                 config = Config.from_env(root_dir)
-                self.assertEqual(config.model_catalog_path, root_dir / "runtime-data" / DEFAULT_MODEL_CONFIG_BASENAME)
+                self.assertEqual(
+                    config.model_catalog_path,
+                    root_dir / "runtime-data" / DEFAULT_MODEL_CONFIG_BASENAME,
+                )
                 self.assertTrue(config.model_catalog_path.is_file())
                 self.assertEqual(config.model_catalog["openai"][0].model_id, "gpt-5.4")
 
@@ -141,7 +146,9 @@ class ConfigTests(unittest.TestCase):
             )
 
             with mock.patch.dict(os.environ, {}, clear=True):
-                with self.assertRaisesRegex(RuntimeError, "BOT_MODEL_CONFIG_PATH does not exist"):
+                with self.assertRaisesRegex(
+                    RuntimeError, "BOT_MODEL_CONFIG_PATH does not exist"
+                ):
                     Config.from_env(root_dir)
 
             self.assertFalse(missing_catalog_path.exists())
@@ -173,7 +180,9 @@ class ConfigTests(unittest.TestCase):
             )
 
             with mock.patch.dict(os.environ, {}, clear=True):
-                with self.assertRaisesRegex(RuntimeError, "thinking_budget_tokens must be a positive integer"):
+                with self.assertRaisesRegex(
+                    RuntimeError, "thinking_budget_tokens must be a positive integer"
+                ):
                     Config.from_env(root_dir)
 
     def test_from_env_rejects_boolean_max_output_tokens(self) -> None:
@@ -201,7 +210,9 @@ class ConfigTests(unittest.TestCase):
             )
 
             with mock.patch.dict(os.environ, {}, clear=True):
-                with self.assertRaisesRegex(RuntimeError, "max_output_tokens must be a positive integer"):
+                with self.assertRaisesRegex(
+                    RuntimeError, "max_output_tokens must be a positive integer"
+                ):
                     Config.from_env(root_dir)
 
     def test_from_env_rejects_claude_thinking_budget_above_max_output(self) -> None:
@@ -231,7 +242,10 @@ class ConfigTests(unittest.TestCase):
             )
 
             with mock.patch.dict(os.environ, {}, clear=True):
-                with self.assertRaisesRegex(RuntimeError, "thinking_budget_tokens=2048 greater than max_output_tokens=1024"):
+                with self.assertRaisesRegex(
+                    RuntimeError,
+                    "thinking_budget_tokens=2048 greater than max_output_tokens=1024",
+                ):
                     Config.from_env(root_dir)
 
     def test_from_env_rejects_invalid_claude_output_effort(self) -> None:
@@ -259,7 +273,9 @@ class ConfigTests(unittest.TestCase):
             )
 
             with mock.patch.dict(os.environ, {}, clear=True):
-                with self.assertRaisesRegex(RuntimeError, "output_effort must be one of"):
+                with self.assertRaisesRegex(
+                    RuntimeError, "output_effort must be one of"
+                ):
                     Config.from_env(root_dir)
 
     def test_from_env_parses_openai_reasoning_effort(self) -> None:
@@ -345,7 +361,9 @@ class ConfigTests(unittest.TestCase):
             )
 
             with mock.patch.dict(os.environ, {}, clear=True):
-                with self.assertRaisesRegex(RuntimeError, "reasoning_effort must be one of"):
+                with self.assertRaisesRegex(
+                    RuntimeError, "reasoning_effort must be one of"
+                ):
                     Config.from_env(root_dir)
 
     def test_from_env_rejects_invalid_gemini_reasoning_effort(self) -> None:
@@ -373,7 +391,9 @@ class ConfigTests(unittest.TestCase):
             )
 
             with mock.patch.dict(os.environ, {}, clear=True):
-                with self.assertRaisesRegex(RuntimeError, "reasoning_effort must be one of"):
+                with self.assertRaisesRegex(
+                    RuntimeError, "reasoning_effort must be one of"
+                ):
                     Config.from_env(root_dir)
 
     def test_from_env_parses_gemini_zero_thinking_budget(self) -> None:
@@ -430,7 +450,9 @@ class ConfigTests(unittest.TestCase):
             )
 
             with mock.patch.dict(os.environ, {}, clear=True):
-                with self.assertRaisesRegex(RuntimeError, "reasoning_effort is not supported"):
+                with self.assertRaisesRegex(
+                    RuntimeError, "reasoning_effort is not supported"
+                ):
                     Config.from_env(root_dir)
 
     def test_from_env_parses_grok_reasoning_effort(self) -> None:
@@ -489,7 +511,9 @@ class ConfigTests(unittest.TestCase):
             )
 
             with mock.patch.dict(os.environ, {}, clear=True):
-                with self.assertRaisesRegex(RuntimeError, "reasoning_effort must be one of"):
+                with self.assertRaisesRegex(
+                    RuntimeError, "reasoning_effort must be one of"
+                ):
                     Config.from_env(root_dir)
 
     def test_from_env_reads_safety_identifier_salt(self) -> None:
@@ -525,6 +549,78 @@ class ConfigTests(unittest.TestCase):
 
             with mock.patch.dict(os.environ, {}, clear=True):
                 with self.assertRaisesRegex(RuntimeError, "SAFETY_IDENTIFIER_SALT"):
+                    Config.from_env(root_dir)
+
+    def test_from_env_defaults_claude_prompt_cache_ttl_to_five_minutes(self) -> None:
+        with tempfile.TemporaryDirectory() as tempdir:
+            root_dir = Path(tempdir)
+            (root_dir / ".env").write_text(
+                "\n".join(
+                    [
+                        "TELEGRAM_BOT_TOKEN=test-token",
+                        "ANTHROPIC_API_KEY=anthropic-key",
+                    ]
+                )
+            )
+
+            with mock.patch.dict(os.environ, {}, clear=True):
+                config = Config.from_env(root_dir)
+
+        self.assertEqual(config.claude_prompt_cache_ttl, "5m")
+
+    def test_from_env_reads_claude_prompt_cache_ttl(self) -> None:
+        with tempfile.TemporaryDirectory() as tempdir:
+            root_dir = Path(tempdir)
+            (root_dir / ".env").write_text(
+                "\n".join(
+                    [
+                        "TELEGRAM_BOT_TOKEN=test-token",
+                        "ANTHROPIC_API_KEY=anthropic-key",
+                        "BOT_CLAUDE_PROMPT_CACHE_TTL=1h",
+                    ]
+                )
+            )
+
+            with mock.patch.dict(os.environ, {}, clear=True):
+                config = Config.from_env(root_dir)
+
+        self.assertEqual(config.claude_prompt_cache_ttl, "1h")
+
+    def test_from_env_allows_disabling_claude_prompt_cache(self) -> None:
+        with tempfile.TemporaryDirectory() as tempdir:
+            root_dir = Path(tempdir)
+            (root_dir / ".env").write_text(
+                "\n".join(
+                    [
+                        "TELEGRAM_BOT_TOKEN=test-token",
+                        "ANTHROPIC_API_KEY=anthropic-key",
+                        "BOT_CLAUDE_PROMPT_CACHE_TTL=off",
+                    ]
+                )
+            )
+
+            with mock.patch.dict(os.environ, {}, clear=True):
+                config = Config.from_env(root_dir)
+
+        self.assertIsNone(config.claude_prompt_cache_ttl)
+
+    def test_from_env_rejects_invalid_claude_prompt_cache_ttl(self) -> None:
+        with tempfile.TemporaryDirectory() as tempdir:
+            root_dir = Path(tempdir)
+            (root_dir / ".env").write_text(
+                "\n".join(
+                    [
+                        "TELEGRAM_BOT_TOKEN=test-token",
+                        "ANTHROPIC_API_KEY=anthropic-key",
+                        "BOT_CLAUDE_PROMPT_CACHE_TTL=10m",
+                    ]
+                )
+            )
+
+            with mock.patch.dict(os.environ, {}, clear=True):
+                with self.assertRaisesRegex(
+                    RuntimeError, "BOT_CLAUDE_PROMPT_CACHE_TTL"
+                ):
                     Config.from_env(root_dir)
 
 

@@ -81,6 +81,7 @@ Optional but useful:
 - `BOT_DEFAULT_REPLY_MODE`
 - `BOT_SKIP_PREFIX`
 - `BOT_CONVERSATION_TIMEOUT_SECONDS`
+- `BOT_CLAUDE_PROMPT_CACHE_TTL`
 - `BOT_SYSTEM_PROMPT`
 - `BOT_DATA_DIR`
 - `SAFETY_IDENTIFIER_SALT`
@@ -93,6 +94,7 @@ Notes:
 - `SAFETY_IDENTIFIER_SALT`, when set, must be at least 16 characters long
 - the model catalog defaults to `${BOT_DATA_DIR}/models.toml`
 - reasoning-capable OpenAI, Gemini, and Grok entries can set `reasoning_effort` in the model catalog
+- Claude prompt caching is enabled by default with a 5-minute TTL; set `BOT_CLAUDE_PROMPT_CACHE_TTL=1h` for the extended TTL or `off` to disable it
 
 ## Running
 
