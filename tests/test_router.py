@@ -84,6 +84,21 @@ class RouterTests(unittest.TestCase):
         self.assertIsInstance(action, CommandAction)
         assert isinstance(action, CommandAction)
         self.assertEqual(action.name, "models")
+        self.assertIsNone(action.argument)
+
+    def test_parse_models_command_with_alias(self) -> None:
+        action = self.router.route(make_message(text="/models o-s"), make_settings())
+        self.assertIsInstance(action, CommandAction)
+        assert isinstance(action, CommandAction)
+        self.assertEqual(action.name, "models")
+        self.assertEqual(action.argument, "o-s")
+
+    def test_models_command_rejects_extra_content(self) -> None:
+        action = self.router.route(make_message(text="/models o extra"), make_settings())
+        self.assertIsInstance(action, CommandAction)
+        assert isinstance(action, CommandAction)
+        self.assertEqual(action.name, "usage_error")
+        self.assertEqual(action.content, "Usage: /models [alias]")
 
     def test_parse_mode_command(self) -> None:
         action = self.router.route(make_message(text="/mode mention"), make_settings())

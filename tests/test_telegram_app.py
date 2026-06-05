@@ -237,6 +237,9 @@ class FakeService:
     def list_models_text(self, settings) -> str:
         return f"Default model: {settings.default_model_alias}"
 
+    def model_settings_text(self, *, settings, alias: str) -> str:
+        return f"Config for {alias} with default {settings.default_model_alias}"
+
 
 class DummyConfig:
     poll_timeout_seconds = 30
@@ -1004,6 +1007,12 @@ class TelegramAppTests(unittest.IsolatedAsyncioTestCase):
 
         self.assertEqual(self.service.timeout_calls, [(100, "10m", False)])
         self.assertEqual(self.api.sent_messages[-1]["text"], "Conversation timeout set to 10m")
+        self.assertEqual(self.api.sent_messages[-1]["reply_to_message_id"], 10)
+
+    async def test_models_command_with_alias_shows_model_settings(self) -> None:
+        await self.app._handle_update(make_update(text="/models o-s"))
+
+        self.assertEqual(self.api.sent_messages[-1]["text"], "Config for o-s with default o")
         self.assertEqual(self.api.sent_messages[-1]["reply_to_message_id"], 10)
 
     async def test_timeout_command_reports_invalid_duration(self) -> None:

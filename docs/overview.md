@@ -38,7 +38,7 @@ Core commands:
 - `/help`
 - `/help <n|c|s>`
 - `/ping`
-- `/models`
+- `/models [alias]`
 - `/model <alias>`
 - `/timeout <duration>`
 - `/r`

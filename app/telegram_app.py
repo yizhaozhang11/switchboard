@@ -486,9 +486,14 @@ class TelegramApp:
             return
 
         if action.name == "models":
+            text = (
+                self.service.model_settings_text(settings=settings, alias=action.argument)
+                if action.argument is not None
+                else self.service.list_models_text(settings)
+            )
             await self._send_reply_only_response(
                 message=message,
-                text=self.service.list_models_text(settings),
+                text=text,
                 inbox_update_ids=inbox_update_ids,
             )
             return

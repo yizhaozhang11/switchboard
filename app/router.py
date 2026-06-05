@@ -53,7 +53,10 @@ class Router:
             return CommandAction(name="help", argument=argument)
 
         if command_name == "models":
-            return CommandAction(name="models")
+            if len(command_tokens) > 2 or (has_newline and remainder.strip()):
+                return CommandAction(name="usage_error", content="Usage: /models [alias]")
+            argument = command_tokens[1].strip() if len(command_tokens) == 2 else None
+            return CommandAction(name="models", argument=argument)
 
         if command_name == "model":
             if len(command_tokens) < 2:

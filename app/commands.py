@@ -28,7 +28,7 @@ COMMAND_HELP_TOPICS = ("n", "c", "s")
 CORE_COMMANDS = (
     CommandSpec("help", "", "show this help", "Show help"),
     CommandSpec("ping", "", "show chat and user IDs, reply mode, and default model", "Show chat status"),
-    CommandSpec("models", "", "list available model aliases", "List available model aliases"),
+    CommandSpec("models", " [alias]", "list model aliases or show one model's config", "List model aliases"),
     CommandSpec("r", "", "show raw text from a stored assistant or user message", "Show raw message text"),
     CommandSpec("c", " <alias> <content>", "send one message with a specific model", "Send with a specific model"),
     CommandSpec("n", " [content]", "start a fresh conversation", "Start a fresh conversation"),

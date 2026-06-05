@@ -10,7 +10,7 @@ from dataclasses import dataclass, replace
 from app.commands import CHAT_SETTING_COMMANDS, COMMAND_HELP_TOPICS, CORE_COMMANDS, OWNER_COMMANDS
 from app.config import MAX_CONVERSATION_TIMEOUT_SECONDS, VALID_REPLY_MODES
 from app.conversation_engine import ConversationEngine, DeferredAction, StoredUserInput, TurnPlan
-from app.providers.registry import ProviderRegistry, supported_tool_aliases_for_provider
+from app.providers.registry import ProviderRegistry, ResolvedModelSelection, supported_tool_aliases_for_provider
 from app.render import ReplySession, render_reply_text
 from app.richtext import RichText
 from app.storage import Storage, utcnow
@@ -79,7 +79,12 @@ class ChatService:
         self._assistant_completion_events: dict[int, asyncio.Event] = {}
 
     def list_models_text(self, settings: ChatSettings) -> str:
-        lines = [f"Default model: {settings.default_model_alias}", "", "Available models:"]
+        lines = [
+            f"Default model: {settings.default_model_alias}",
+            "Use /models <alias> to show a model's config.",
+            "",
+            "Available models:",
+        ]
         for resolved in self.registry.list_models():
             aliases = ", ".join(resolved.model.aliases)
             line = f"- {aliases} -> {resolved.model.provider}:{resolved.model.model_id}"
@@ -90,6 +95,67 @@ class ChatService:
                     line += f" (options: {options})"
             lines.append(line)
         return "\n".join(lines)
+
+    def model_settings_text(self, *, settings: ChatSettings, alias: str) -> str:
+        selection = self.registry.resolve_selection(alias)
+        if selection is None:
+            return f"Unknown model alias: {alias}\nUse /models to list available aliases."
+
+        model = selection.model
+        lines = [
+            f"Model: {alias.strip()}",
+            f"Provider: {model.provider}",
+            f"Model ID: {model.model_id}",
+            f"Aliases: {', '.join(model.aliases)}",
+            f"Default for chat: {self._format_bool(settings.default_model_alias.casefold() == alias.strip().casefold())}",
+            "",
+            "Capabilities:",
+            f"- images: {self._format_bool(model.supports_images)}",
+            f"- files: {self._format_bool(model.supports_files)}",
+            f"- tools: {self._format_tools_capability(selection)}",
+            f"- reasoning: {self._format_bool(model.supports_reasoning)}",
+            f"- streaming: {self._format_bool(model.supports_streaming)}",
+            "",
+            "Config:",
+        ]
+
+        config_lines = self._model_config_lines(selection)
+        if config_lines:
+            lines.extend(config_lines)
+        else:
+            lines.append("- no provider-specific settings configured")
+        return "\n".join(lines)
+
+    def _format_tools_capability(self, selection: ResolvedModelSelection) -> str:
+        if not selection.model.supports_tools:
+            return "no"
+
+        details: list[str] = []
+        tool_aliases = supported_tool_aliases_for_provider(selection.model.provider)
+        if tool_aliases:
+            details.append("options: " + ", ".join(f"-{alias}" for alias in tool_aliases))
+        if selection.requested_tools:
+            details.append("selected: " + ", ".join(selection.requested_tools))
+        if details:
+            return "yes (" + "; ".join(details) + ")"
+        return "yes"
+
+    def _model_config_lines(self, selection: ResolvedModelSelection) -> list[str]:
+        model = selection.model
+        settings = (
+            ("reasoning_effort", model.reasoning_effort),
+            ("thinking_mode", model.thinking_mode),
+            ("thinking_budget_tokens", model.thinking_budget_tokens),
+            ("output_effort", model.output_effort),
+            ("max_output_tokens", model.max_output_tokens),
+        )
+        lines = [f"- {name}: {value}" for name, value in settings if value is not None]
+        if selection.requested_tools:
+            lines.append("- requested_tools: " + ", ".join(selection.requested_tools))
+        return lines
+
+    def _format_bool(self, value: bool) -> str:
+        return "yes" if value else "no"
 
     def help_text(self, *, settings: ChatSettings) -> str:
         lines = ["Commands:"]

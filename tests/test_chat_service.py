@@ -174,7 +174,16 @@ class ControlledProvider:
         self.block_request_numbers: set[int] = set()
         self.pause_after_first_event_requests: set[int] = set()
         self._models = [
-            ModelSpec(provider="fake", model_id="default-model", aliases=("o",), supports_images=True, supports_tools=True),
+            ModelSpec(
+                provider="fake",
+                model_id="default-model",
+                aliases=("o",),
+                supports_images=True,
+                supports_tools=True,
+                supports_reasoning=True,
+                reasoning_effort="medium",
+                max_output_tokens=1000,
+            ),
             ModelSpec(provider="fake", model_id="alt-model", aliases=("alt",), supports_images=True),
         ]
 
@@ -228,6 +237,31 @@ class ChatServiceTests(unittest.IsolatedAsyncioTestCase):
         )
         self.api = FakeTelegramAPI()
         self.settings = make_settings()
+
+    def test_list_models_mentions_detail_command(self) -> None:
+        text = self.service.list_models_text(self.settings)
+
+        self.assertIn("Default model: o", text)
+        self.assertIn("Use /models <alias> to show a model's config.", text)
+        self.assertIn("- o -> fake:default-model", text)
+
+    def test_model_settings_text_shows_config(self) -> None:
+        text = self.service.model_settings_text(settings=self.settings, alias="o")
+
+        self.assertIn("Model: o", text)
+        self.assertIn("Provider: fake", text)
+        self.assertIn("Model ID: default-model", text)
+        self.assertIn("Default for chat: yes", text)
+        self.assertIn("- images: yes", text)
+        self.assertIn("- tools: yes (options: -s)", text)
+        self.assertIn("- reasoning: yes", text)
+        self.assertIn("- reasoning_effort: medium", text)
+        self.assertIn("- max_output_tokens: 1000", text)
+
+    def test_model_settings_text_reports_unknown_alias(self) -> None:
+        text = self.service.model_settings_text(settings=self.settings, alias="missing")
+
+        self.assertEqual(text, "Unknown model alias: missing\nUse /models to list available aliases.")
 
     def tearDown(self) -> None:
         self.storage.close()
