@@ -159,17 +159,21 @@ class ChatService:
         inbox_update_ids: tuple[int, ...] = (),
     ) -> None:
         target_message = self._resolve_raw_content_target(message)
-        if target_message is None:
+        if target_message is not None:
+            empty_label = "(empty response)" if target_message.message_type == "assistant" else "(empty message)"
+            raw_text = target_message.content if target_message.content.strip() else empty_label
+        else:
             await self._send_command_reply(
                 api=api,
                 chat_id=message.chat_id,
-                text="Usage: /r after an assistant reply, or reply to an assistant message with /r.",
+                text="Usage: /r after a stored assistant reply, or reply to a stored assistant/user message with /r.",
                 reply_to_message_id=message.message_id,
                 inbox_update_ids=inbox_update_ids,
             )
             return
+        if not raw_text.strip():
+            raw_text = "(empty message)"
 
-        raw_text = target_message.content if target_message.content.strip() else "(empty response)"
         await self._send_command_reply(
             api=api,
             chat_id=message.chat_id,
@@ -191,7 +195,7 @@ class ChatService:
                 user_id=message.user_id,
             )
 
-        if target_message is None or target_message.message_type != "assistant":
+        if target_message is None or target_message.message_type not in {"assistant", "user", "seed"}:
             return None
         return target_message
 

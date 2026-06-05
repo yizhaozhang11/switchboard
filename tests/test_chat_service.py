@@ -45,6 +45,7 @@ def make_message(
     user_id: int = 200,
     reply_to_message_id: int | None = None,
     reply_to_bot: bool = False,
+    reply_to_text: str | None = None,
     source_message_ids: tuple[int, ...] = (),
 ) -> IncomingMessage:
     effective_source_message_ids = source_message_ids or (message_id,)
@@ -61,7 +62,7 @@ def make_message(
         reply_to_message_id=reply_to_message_id,
         reply_to_user_id=None,
         reply_to_bot=reply_to_bot,
-        reply_to_text=None,
+        reply_to_text=reply_to_text,
         images=images,
         parts=parts,
     )
@@ -496,6 +497,53 @@ class ChatServiceTests(unittest.IsolatedAsyncioTestCase):
             [{"type": "pre", "offset": 0, "length": 7}],
         )
 
+    async def test_raw_command_reply_to_stored_user_message_uses_user_content(self) -> None:
+        await self._send_plain(message_id=1, text="**exact** user")
+
+        await self._send_raw(message_id=2, reply_to_message_id=1, reply_to_bot=False)
+
+        self.assertEqual(self.api.sent_messages[-1]["reply_to_message_id"], 2)
+        self.assertEqual(self.api.sent_messages[-1]["text"], "**exact** user")
+        self.assertEqual(
+            self.api.sent_messages[-1]["entities"],
+            [{"type": "pre", "offset": 0, "length": 14}],
+        )
+
+    async def test_raw_command_reply_to_stored_command_user_messages_uses_message_string(self) -> None:
+        cases = (
+            (
+                "choose_model",
+                lambda: self._send_choose_model(message_id=1, alias="alt", text="model-specific"),
+                1,
+                "model-specific",
+            ),
+            (
+                "new",
+                lambda: self._send_new(message_id=3, text="fresh start"),
+                3,
+                "fresh start",
+            ),
+            (
+                "system_prompt",
+                lambda: self._send_system_prompt(message_id=5, prompt="be concise"),
+                5,
+                "be concise",
+            ),
+        )
+        for name, send_message, target_message_id, expected_text in cases:
+            with self.subTest(name=name):
+                await send_message()
+                await self._send_raw(
+                    message_id=target_message_id + 1,
+                    reply_to_message_id=target_message_id,
+                    reply_to_bot=False,
+                )
+                self.assertEqual(self.api.sent_messages[-1]["text"], expected_text)
+                self.assertEqual(
+                    self.api.sent_messages[-1]["entities"],
+                    [{"type": "pre", "offset": 0, "length": len(expected_text)}],
+                )
+
     async def test_raw_command_preserves_whitespace_when_split(self) -> None:
         raw_text = "alpha \n  beta  gamma"
         self.provider.request_events[1] = [
@@ -541,7 +589,22 @@ class ChatServiceTests(unittest.IsolatedAsyncioTestCase):
         self.assertEqual(self.api.sent_messages[-1]["reply_to_message_id"], 1)
         self.assertEqual(
             self.api.sent_messages[-1]["text"],
-            "Usage: /r after an assistant reply, or reply to an assistant message with /r.",
+            "Usage: /r after a stored assistant reply, or reply to a stored assistant/user message with /r.",
+        )
+        self.assertEqual(self.api.sent_messages[-1]["entities"], [])
+
+    async def test_raw_command_reply_to_unstored_targeted_user_command_sends_usage(self) -> None:
+        await self._send_raw(
+            message_id=1,
+            reply_to_message_id=999,
+            reply_to_bot=False,
+            reply_to_text="/c@OtherBot o text",
+        )
+
+        self.assertEqual(self.api.sent_messages[-1]["reply_to_message_id"], 1)
+        self.assertEqual(
+            self.api.sent_messages[-1]["text"],
+            "Usage: /r after a stored assistant reply, or reply to a stored assistant/user message with /r.",
         )
         self.assertEqual(self.api.sent_messages[-1]["entities"], [])
 
@@ -2231,14 +2294,18 @@ class ChatServiceTests(unittest.IsolatedAsyncioTestCase):
         *,
         message_id: int,
         reply_to_message_id: int | None = None,
+        reply_to_bot: bool | None = None,
+        reply_to_text: str | None = None,
     ) -> None:
+        effective_reply_to_bot = reply_to_message_id is not None if reply_to_bot is None else reply_to_bot
         await self.service.send_raw_content_reply(
             api=self.api,
             message=make_message(
                 message_id=message_id,
                 text="/r",
                 reply_to_message_id=reply_to_message_id,
-                reply_to_bot=reply_to_message_id is not None,
+                reply_to_bot=effective_reply_to_bot,
+                reply_to_text=reply_to_text,
             ),
         )
 
